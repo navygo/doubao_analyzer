@@ -39,3 +39,18 @@
 
 # debug information files
 *.dwo
+
+# key files
+key/*
+# build files
+build/*
+# log files
+log/*
+# temp files
+temp/*
+# backup files
+backup/*
+# other files
+other/*
+
+test/*
