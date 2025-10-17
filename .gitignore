@@ -39,6 +39,7 @@
 
 # debug information files
 *.dwo
+<<<<<<< HEAD
 
 # key files
 key/*
@@ -54,3 +55,5 @@ backup/*
 other/*
 
 test/*
+=======
+>>>>>>> origin/main

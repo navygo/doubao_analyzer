@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # 豆包大模型媒体分析工具 (C++17)
 
 基于字节跳动豆包大模型的图片和视频分析工具，使用C++17重写，支持Ubuntu系统部署。
@@ -224,3 +225,6 @@ doubao_analyzer --api-key YOUR_KEY --image test/test.jpg
 ✅ 结果保存
 ✅ 完整的错误处理
 代码已针对Ubuntu系统优化，使用标准的C++17特性和现代CMake构建系统
+=======
+# doubao_analyzer
+>>>>>>> origin/main
