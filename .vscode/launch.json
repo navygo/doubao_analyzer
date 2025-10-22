@@ -38,9 +38,7 @@
                 "--api-key",
                 "9337f332-cfd4-43f2-a862-0dc320934c7c",
                 "--video",
-                "test/test.mp4",
-                "--output",
-                "output"
+                "test/test.mp4"
             ],
             "stopAtEntry": false,
             "cwd": "${workspaceFolder}",
