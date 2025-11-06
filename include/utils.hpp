@@ -67,4 +67,8 @@ namespace utils {
     // 时间工具
     double get_current_time();
     void sleep_seconds(int seconds);
+
+    // 文件下载工具
+    bool download_file(const std::string& url, const std::string& output_path);
+    std::string get_current_timestamp();
 }

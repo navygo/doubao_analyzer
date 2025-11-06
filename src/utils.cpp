@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <chrono>
 #include <thread>
+#include <iomanip>
 #include <curl/curl.h>
 
 namespace utils {
@@ -274,6 +275,54 @@ std::string replace_all(const std::string& str, const std::string& from, const s
     }
 
     return result;
+}
+
+// 文件下载工具
+bool download_file(const std::string& url, const std::string& output_path) {
+    CURL* curl = curl_easy_init();
+    if (!curl) {
+        std::cerr << "❌ 初始化CURL失败" << std::endl;
+        return false;
+    }
+
+    FILE* fp = fopen(output_path.c_str(), "wb");
+    if (!fp) {
+        std::cerr << "❌ 无法打开输出文件: " << output_path << std::endl;
+        curl_easy_cleanup(curl);
+        return false;
+    }
+
+    curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
+    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, NULL);
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA, fp);
+    curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
+    curl_easy_setopt(curl, CURLOPT_TIMEOUT, 300L); // 5分钟超时
+
+    CURLcode res = curl_easy_perform(curl);
+
+    curl_easy_cleanup(curl);
+    fclose(fp);
+
+    if (res != CURLE_OK) {
+        std::cerr << "❌ 下载失败: " << curl_easy_strerror(res) << std::endl;
+        std::filesystem::remove(output_path); // 删除部分下载的文件
+        return false;
+    }
+
+    return true;
+}
+
+std::string get_current_timestamp() {
+    auto now = std::chrono::system_clock::now();
+    auto time_t = std::chrono::system_clock::to_time_t(now);
+    auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+        now.time_since_epoch()) % 1000;
+
+    std::stringstream ss;
+    ss << std::put_time(std::localtime(&time_t), "%Y-%m-%d %H:%M:%S");
+    ss << '.' << std::setfill('0') << std::setw(3) << ms.count();
+
+    return ss.str();
 }
 
 } // namespace utils

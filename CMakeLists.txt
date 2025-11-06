@@ -45,8 +45,22 @@ set(SOURCES
     src/ConfigManager.cpp
 )
 
+# API服务器源文件
+set(API_SOURCES
+    src/api_main.cpp
+    src/ApiServer.cpp
+    src/DoubaoMediaAnalyzer.cpp
+    src/DoubaoMediaAnalyzer_db.cpp
+    src/utils.cpp
+    src/config.cpp
+    src/DatabaseManager.cpp
+    src/DatabaseManager_extended.cpp
+    src/ConfigManager.cpp
+)
+
 # 创建可执行文件
 add_executable(doubao_analyzer ${SOURCES})
+add_executable(doubao_api_server ${API_SOURCES})
 
 # 链接库
 target_link_libraries(doubao_analyzer
@@ -55,5 +69,16 @@ target_link_libraries(doubao_analyzer
     ${MYSQL_LIBRARIES}
 )
 
+# API服务器链接库
+target_link_libraries(doubao_api_server
+    ${OpenCV_LIBS}
+    CURL::libcurl
+    ${MYSQL_LIBRARIES}
+)
+
 # 设置C++标准
 target_compile_features(doubao_analyzer PRIVATE cxx_std_17)
+target_compile_features(doubao_api_server PRIVATE cxx_std_17)
+
+# 安装目标
+install(TARGETS doubao_analyzer doubao_api_server DESTINATION bin)
