@@ -38,6 +38,7 @@ namespace utils {
     std::string trim(const std::string& str, const std::string& chars_to_trim);
     bool starts_with(const std::string& str, const std::string& prefix);
     bool ends_with(const std::string& str, const std::string& suffix);
+    std::string replace_all(const std::string& str, const std::string& from, const std::string& to);
     
     // 文件工具
     bool file_exists(const std::string& path);

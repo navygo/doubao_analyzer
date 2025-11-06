@@ -22,4 +22,11 @@ namespace config {
     // 文件扩展名
     extern const std::vector<std::string> IMAGE_EXTENSIONS;
     extern const std::vector<std::string> VIDEO_EXTENSIONS;
+
+    // 数据库配置
+    extern const std::string DB_HOST;
+    extern const std::string DB_USER;
+    extern const std::string DB_PASSWORD;
+    extern const std::string DB_NAME;
+    extern const unsigned int DB_PORT;
 }

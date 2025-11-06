@@ -38,6 +38,10 @@ void print_usage()
     std::cout << "  --max-files NUM      最大分析文件数量 (默认: 5)" << std::endl;
     std::cout << "  --video-frames NUM   视频提取帧数 (默认: 5)" << std::endl;
     std::cout << "  --output PATH        结果保存路径" << std::endl;
+    std::cout << "  --save-to-db        将结果保存到数据库" << std::endl;
+    std::cout << "  --query-db CONDITION 查询数据库记录" << std::endl;
+    std::cout << "  --query-tag TAG      按标签查询数据库记录" << std::endl;
+    std::cout << "  --db-stats           显示数据库统计信息" << std::endl;
     std::cout << "  --help               显示此帮助信息" << std::endl;
     std::cout << std::endl;
     std::cout << "示例:" << std::endl;
@@ -318,6 +322,10 @@ int main(int argc, char *argv[])
     std::string output_path;
     int max_files = 5;
     int video_frames = 5;
+    bool save_to_db = false;
+    std::string query_db;
+    std::string query_tag;
+    bool show_db_stats = false;
 
     for (int i = 1; i < argc; ++i)
     {
@@ -364,6 +372,22 @@ int main(int argc, char *argv[])
         {
             output_path = argv[++i];
         }
+        else if (arg == "--save-to-db")
+        {
+            save_to_db = true;
+        }
+        else if (arg == "--query-db" && i + 1 < argc)
+        {
+            query_db = argv[++i];
+        }
+        else if (arg == "--query-tag" && i + 1 < argc)
+        {
+            query_tag = argv[++i];
+        }
+        else if (arg == "--db-stats")
+        {
+            show_db_stats = true;
+        }
     }
 
     if (api_key.empty())
@@ -379,10 +403,112 @@ int main(int argc, char *argv[])
     std::cout << "🚀 豆包大模型媒体分析调试工具（支持图片和视频）" << std::endl;
     std::cout << std::string(60, '=') << std::endl;
 
+    // 初始化数据库
+    if (save_to_db || !query_db.empty() || !query_tag.empty() || show_db_stats)
+    {
+        std::cout << "🔌 正在初始化数据库连接..." << std::endl;
+        if (!analyzer.initialize_database())
+        {
+            std::cout << "❌ 数据库初始化失败" << std::endl;
+            return 1;
+        }
+        std::cout << "✅ 数据库连接成功" << std::endl;
+    }
+
     // 测试连接
     if (!analyzer.test_connection())
     {
         return 1;
+    }
+
+    // 处理数据库查询和统计请求
+    if (!query_db.empty())
+    {
+        std::cout << "🔍 查询数据库记录: " << query_db << std::endl;
+        auto db_results = analyzer.query_database_results(query_db);
+
+        if (db_results.empty())
+        {
+            std::cout << "❌ 未找到匹配的记录" << std::endl;
+        }
+        else
+        {
+            std::cout << "✅ 找到 " << db_results.size() << " 条记录:" << std::endl;
+            for (const auto &record : db_results)
+            {
+                std::cout << "📄 文件: " << record.file_name
+                          << " (" << record.file_type << ")" << std::endl;
+                std::cout << "📅 时间: " << record.created_at << std::endl;
+                std::cout << "⏱️  响应时间: " << record.response_time << "秒" << std::endl;
+                std::cout << "🏷️  标签: " << record.tags << std::endl;
+                std::cout << "📝 分析结果: " << record.analysis_result << std::endl;
+            }
+        }
+        return 0;
+    }
+
+    if (!query_tag.empty())
+    {
+        std::cout << "🏷️  按标签查询数据库记录: " << query_tag << std::endl;
+        auto db_results = analyzer.query_by_tag(query_tag);
+
+        if (db_results.empty())
+        {
+            std::cout << "❌ 未找到包含标签 '" << query_tag << "' 的记录" << std::endl;
+        }
+        else
+        {
+            std::cout << "✅ 找到 " << db_results.size() << " 条记录:" << std::endl;
+            for (const auto &record : db_results)
+            {
+                std::cout << "📄 文件: " << record.file_name
+                          << " (" << record.file_type << ")" << std::endl;
+                std::cout << "📅 时间: " << record.created_at << std::endl;
+                std::cout << "⏱️  响应时间: " << record.response_time << "秒" << std::endl;
+                std::cout << "🏷️  标签: " << record.tags << std::endl;
+                std::cout << "📝 分析结果: " << record.analysis_result << std::endl;
+            }
+        }
+        return 0;
+    }
+
+    if (show_db_stats)
+    {
+        std::cout << "📊 数据库统计信息:" << std::endl;
+        auto stats = analyzer.get_database_statistics();
+
+        if (stats.empty())
+        {
+            std::cout << "❌ 无法获取统计信息" << std::endl;
+        }
+        else
+        {
+            if (stats.contains("total_analyses"))
+            {
+                std::cout << "总分析数量: " << stats["total_analyses"] << std::endl;
+            }
+            if (stats.contains("image_analyses"))
+            {
+                std::cout << "图片分析数量: " << stats["image_analyses"] << std::endl;
+            }
+            if (stats.contains("video_analyses"))
+            {
+                std::cout << "视频分析数量: " << stats["video_analyses"] << std::endl;
+            }
+            if (stats.contains("avg_response_time"))
+            {
+                std::cout << "平均响应时间: " << stats["avg_response_time"] << "秒" << std::endl;
+            }
+            if (stats.contains("top_tags"))
+            {
+                std::cout << "最常用标签:" << std::endl;
+                for (const auto &tag : stats["top_tags"])
+                {
+                    std::cout << "  - " << tag["tag"] << ": " << tag["count"] << "次" << std::endl;
+                }
+            }
+        }
+        return 0;
     }
 
     std::vector<AnalysisResult> results;
@@ -399,6 +525,12 @@ int main(int argc, char *argv[])
         result.raw_response["path"] = image_path;
         result.raw_response["type"] = "image";
         results.push_back(result);
+
+        // 保存到数据库
+        if (save_to_db)
+        {
+            analyzer.save_result_to_database(result);
+        }
     }
 
     // 单个视频分析
@@ -413,6 +545,12 @@ int main(int argc, char *argv[])
         result.raw_response["path"] = video_path;
         result.raw_response["type"] = "video";
         results.push_back(result);
+
+        // 保存到数据库
+        if (save_to_db)
+        {
+            analyzer.save_result_to_database(result);
+        }
     }
 
     // 批量媒体分析
@@ -423,6 +561,12 @@ int main(int argc, char *argv[])
 
         auto batch_results = analyzer.batch_analyze(folder_path, analysis_prompt, max_files, file_type);
         results.insert(results.end(), batch_results.begin(), batch_results.end());
+
+        // 保存到数据库
+        if (save_to_db)
+        {
+            analyzer.save_batch_results_to_database(results);
+        }
     }
 
     // 保存结果

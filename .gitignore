@@ -59,3 +59,4 @@ test/*
 >>>>>>> origin/main
 .vscode/*
 .vscode/launch.json
+config/db_config.json

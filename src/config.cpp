@@ -25,4 +25,11 @@ namespace config
     const std::vector<std::string> VIDEO_EXTENSIONS = {
         ".mp4", ".avi", ".mov", ".mkv", ".flv", ".wmv",
         ".MP4", ".AVI", ".MOV", ".MKV", ".FLV", ".WMV"};
+
+    // 数据库配置
+    const std::string DB_HOST = "";
+    const std::string DB_USER = "";
+    const std::string DB_PASSWORD = "";
+    const std::string DB_NAME = "";
+    const unsigned int DB_PORT = 3306;
 }

@@ -1,7 +1,6 @@
-<<<<<<< HEAD
-# 豆包大模型媒体分析工具 (C++17)
+# 豆包大模型媒体分析调试工具
 
-基于字节跳动豆包大模型的图片和视频分析工具，使用C++17重写，支持Ubuntu系统部署。
+基于字节跳动豆包大模型的图片和视频分析工具，使用C++17实现，支持Ubuntu系统部署，并提供数据库存储功能。
 
 ## 功能特性
 
@@ -11,12 +10,16 @@
 - 🏷️ **智能标签**: 自动从分析结果中提取标签
 - ⚡ **高性能**: C++17实现，处理速度快
 - 🔧 **易部署**: 完整的CMake构建系统
+- 💾 **数据库支持**: 支持MySQL数据库存储分析结果
+- 🔍 **结果查询**: 支持按条件查询和标签查询数据库记录
+- 📊 **统计功能**: 提供数据库统计信息
 
 ## 系统要求
 
 - Ubuntu 18.04 或更高版本
 - C++17 兼容编译器 (GCC 7+)
 - CMake 3.10+
+- MySQL 5.7+ (如需使用数据库功能)
 
 ## 快速开始
 
@@ -24,58 +27,101 @@
 ```bash
 chmod +x install_deps.sh
 ./install_deps.sh
+```
 
-
-2. 编译项目
-BASH
+### 2. 编译项目
+```bash
 mkdir build && cd build
 cmake ..
 make -j$(nproc)
-3. 安装到系统
-BASH
+```
+
+### 3. 安装到系统
+```bash
 sudo make install
-4. 运行测试
-BASH
+```
+
+### 4. 运行测试
+```bash
 # 编译测试程序
 make test_config
 
 # 运行功能测试
 ./test_config
-使用方法
-命令行模式
-BASH
-# 分析单张图片
+```
+
+## 使用方法
+
+### 命令行模式
+
+#### 分析单张图片
+```bash
 doubao_analyzer --api-key YOUR_API_KEY --image test.jpg
 
-# 分析单个视频
+#### 分析单个视频
+```bash
 doubao_analyzer --api-key YOUR_API_KEY --video test.mp4 --video-frames 8
+```
 
-# 批量分析文件夹
+#### 批量分析文件夹
+```bash
 doubao_analyzer --api-key YOUR_API_KEY --folder ./media --file-type all --max-files 10
+```
 
-# 仅分析视频文件
+#### 仅分析视频文件
+```bash
 doubao_analyzer --api-key YOUR_API_KEY --folder ./videos --file-type video
+```
 
-# 保存结果到文件
+#### 保存结果到文件
+```bash
 doubao_analyzer --api-key YOUR_API_KEY --folder ./media --output results.json
-交互式模式
-BASH
+```
+
+#### 保存结果到数据库
+```bash
+doubao_analyzer --api-key YOUR_API_KEY --image test.jpg --save-to-db
+```
+
+#### 查询数据库记录
+```bash
+# 按条件查询
+doubao_analyzer --query-db "file_type='image'"
+
+# 按标签查询
+doubao_analyzer --query-tag "黄山"
+
+# 显示数据库统计信息
+doubao_analyzer --db-stats
+```
+
+### 交互式模式
+```bash
 doubao_analyzer
-API配置
-获取豆包API密钥
-在命令行或交互式模式中输入密钥
-工具会自动测试连接
-项目结构
-TEXT
+```
+
+### API配置
+
+#### 获取豆包API密钥
+1. 在命令行或交互式模式中输入密钥
+2. 工具会自动测试连接
+## 项目结构
+
+```
 doubao_analyzer/
 ├── CMakeLists.txt          # 构建配置
 ├── include/               # 头文件
 │   ├── DoubaoMediaAnalyzer.hpp
 │   ├── utils.hpp
-│   └── config.hpp
+│   ├── config.hpp
+│   ├── DatabaseManager.hpp
+│   └── ConfigManager.hpp
 ├── src/                  # 源文件
 │   ├── main.cpp
 │   ├── DoubaoMediaAnalyzer.cpp
+│   ├── DoubaoMediaAnalyzer_db.cpp
+│   ├── DatabaseManager.cpp
+│   ├── ConfigManager.cpp
 │   └── utils.cpp
 ├── test/                # 测试文件
 │   ├── test_config.cpp
@@ -84,31 +130,77 @@ doubao_analyzer/
 ├── setup.sh            # 部署脚本
 ├── install_deps.sh     # 依赖安装脚本
 └── README.md          # 说明文档
-开发说明
-添加新的媒体格式
+```
+
+## 数据库配置
+
+### 1. 安装MySQL
+```bash
+sudo apt update
+sudo apt install mysql-server
+```
+
+### 2. 创建数据库和用户
+```sql
+CREATE DATABASE doubao_analyzer;
+CREATE USER 'doubao_user'@'localhost' IDENTIFIED BY 'your_password';
+GRANT ALL PRIVILEGES ON doubao_analyzer.* TO 'doubao_user'@'localhost';
+FLUSH PRIVILEGES;
+```
+
+### 3. 配置数据库连接
+编辑配置文件(默认位置: ~/.doubao_analyzer/config.json):
+```json
+{
+  "database": {
+    "host": "localhost",
+    "user": "doubao_user",
+    "password": "your_password",
+    "database": "doubao_analyzer",
+    "port": 3306,
+    "charset": "utf8mb4",
+    "connection_timeout": 60,
+    "read_timeout": 60,
+    "write_timeout": 60
+  }
+}
+```
+
+## 开发说明
+
+### 添加新的媒体格式
 在 config.hpp 中扩展对应的文件扩展名数组。
 
-自定义分析提示词
+### 自定义分析提示词
 修改 main.cpp 中的 get_image_prompt() 和 get_video_prompt() 函数。
 
-性能调优
-调整 config.hpp 中的超时设置
-修改视频帧提取数量
-调整图像压缩质量
-故障排除
-常见问题
-编译错误: 确保安装了所有依赖
-OpenCV找不到: 运行 pkg-config --modversion opencv4
-API连接失败: 检查API密钥和网络连接
-调试模式
-编译时添加调试信息：
+### 性能调优
+- 调整 config.hpp 中的超时设置
+- 修改视频帧提取数量
+- 调整图像压缩质量
+## 故障排除
 
-BASH
+### 常见问题
+
+- **编译错误**: 确保安装了所有依赖
+- **OpenCV找不到**: 运行 `pkg-config --modversion opencv4`
+- **API连接失败**: 检查API密钥和网络连接
+- **数据库连接失败**: 检查MySQL服务是否启动，配置文件是否正确
+- **SQL语法错误**: 确保数据库表已正确创建
+
+### 调试模式
+
+编译时添加调试信息：
+```bash
 cmake -DCMAKE_BUILD_TYPE=Debug ..
-许可证
+```
+
+## 许可证
+
 MIT License
 
-贡献
+## 贡献
+
 欢迎提交Issue和Pull Request！
 
 TEXT
@@ -180,42 +272,56 @@ install(CODE "
     message(STATUS \"🔧 交互模式: doubao_analyzer\")
     message(STATUS \"\\n\")
 ")
-部署说明
-一键部署
-BASH
+## 部署说明
+
+### 一键部署
+```bash
 # 给脚本执行权限
 chmod +x setup.sh install_deps.sh
 
 # 运行部署脚本
 ./setup.sh
-手动部署步骤
-安装依赖:
+```
 
-BASH
+### 手动部署步骤
+
+#### 安装依赖:
+```bash
 sudo apt update
-sudo apt install build-essential cmake pkg-config libopencv-dev libcurl4-openssl-dev nlohmann-json3-dev
-编译项目:
+sudo apt install build-essential cmake pkg-config libopencv-dev libcurl4-openssl-dev nlohmann-json3-dev libmysqlclient-dev
+```
 
-BASH
+#### 编译项目:
+```bash
 mkdir build && cd build
 cmake ..
 make -j$(nproc)
-安装到系统:
+```
 
-BASH
+#### 安装到系统:
+```bash
 sudo make install
-验证安装:
+```
 
-BASH
+#### 验证安装:
+```bash
 doubao_analyzer --help
-测试安装
-BASH
+```
+
+#### 测试安装
+```bash
 # 运行功能测试
 cd build
 ./test_config
 
 # 测试API连接 (需要有效API密钥)
 doubao_analyzer --api-key YOUR_KEY --image test/test.jpg
+
+# 测试数据库功能 (需要配置数据库)
+doubao_analyzer --api-key YOUR_KEY --image test/test.jpg --save-to-db
+```
+## 项目特性
+
 这个C++17版本完全复现了Python版本的功能，包括：
 
 ✅ 图片和视频分析
@@ -223,8 +329,7 @@ doubao_analyzer --api-key YOUR_KEY --image test/test.jpg
 ✅ 标签提取
 ✅ 交互式模式
 ✅ 结果保存
+✅ 数据库存储和查询
 ✅ 完整的错误处理
-代码已针对Ubuntu系统优化，使用标准的C++17特性和现代CMake构建系统
-=======
-# doubao_analyzer
->>>>>>> origin/main
+
+代码已针对Ubuntu系统优化，使用标准的C++17特性和现代CMake构建系统。
