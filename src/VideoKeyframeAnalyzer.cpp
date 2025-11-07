@@ -138,10 +138,32 @@ std::vector<std::string> VideoKeyframeAnalyzer::extract_keyframes(const std::str
         // 创建临时输出文件路径
         std::string output_pattern = temp_dir_ + "/keyframe_%03d." + output_format;
         
-        // 使用FFmpeg只提取关键帧 (I帧)
-        std::string cmd = "ffmpeg -i \"" + video_url + "\" -vf \"select=eq(pict_type\\\\,I)\" "
-                         "-vsync vfr -frames:v " + std::to_string(max_frames) + 
-                         " -q:v 3 -y \"" + output_pattern + "\"";
+        // 先获取视频编码格式
+        std::string codec_check_cmd = "ffprobe -v error -select_streams v:0 -show_entries stream=codec_name -of csv \"" + video_url + "\"";
+        std::string codec_result = execute_command(codec_check_cmd);
+        std::string codec = "";
+        
+        // 解析编码格式
+        if (codec_result.find("h264") != std::string::npos) {
+            codec = "h264";
+        } else if (codec_result.find("hevc") != std::string::npos) {
+            codec = "hevc";
+        }
+        
+        std::string cmd;
+        
+        // 根据编码格式选择不同的提取策略
+        if (codec == "hevc") {
+            // HEVC编码使用场景变化检测 + 固定间隔采样
+            cmd = "ffmpeg -i \"" + video_url + "\" -vf \"select=gt(scene\\\\,0.3)+eq(n\\\\,2)\" "
+                     "-vsync vfr -frames:v " + std::to_string(max_frames) + 
+                     " -q:v 3 -y \"" + output_pattern + "\"";
+        } else {
+            // H.264等其他编码使用关键帧检测
+            cmd = "ffmpeg -i \"" + video_url + "\" -vf \"select=eq(pict_type\\\\,I)\" "
+                     "-vsync vfr -frames:v " + std::to_string(max_frames) + 
+                     " -q:v 3 -y \"" + output_pattern + "\"";
+        }
         
         // 执行命令
         execute_command(cmd);
