@@ -52,6 +52,7 @@ namespace utils {
     // Base64编码
     std::string base64_encode(const std::vector<unsigned char>& data);
     std::string base64_encode_file(const std::string& file_path);
+    std::vector<unsigned char> base64_decode(const std::string& encoded_string);
     
     // 图像处理
     std::vector<unsigned char> encode_image_to_jpeg(const cv::Mat& image, int quality = 85);
@@ -67,6 +68,7 @@ namespace utils {
     // 时间工具
     double get_current_time();
     void sleep_seconds(int seconds);
+    std::string get_formatted_timestamp(); // 格式化时间戳，用于日志输出
 
     // 文件下载工具
     bool download_file(const std::string& url, const std::string& output_path);

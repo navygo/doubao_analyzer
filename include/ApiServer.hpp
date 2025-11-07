@@ -16,6 +16,18 @@ struct ApiRequest {
     bool save_to_db;        // 是否保存结果到数据库
 };
 
+// API查询请求结构
+struct ApiQueryRequest {
+    std::string query_type;  // "all", "tag", "type", "date_range", "recent", "url"
+    std::string tag;          // 要查询的标签（当query_type为"tag"时使用）
+    std::string file_type;    // 要查询的文件类型（当query_type为"type"时使用）
+    std::string start_date;   // 开始日期（当query_type为"date_range"时使用）
+    std::string end_date;     // 结束日期（当query_type为"date_range"时使用）
+    int limit;                // 返回结果数量限制（当query_type为"recent"时使用）
+    std::string condition;    // 自定义查询条件
+    std::string media_url;    // 要查询的媒体URL（当query_type为"url"时使用）
+};
+
 // API响应结构
 struct ApiResponse {
     bool success;
@@ -35,13 +47,16 @@ private:
     std::string host_;
 
     // 解析API请求
-    ApiResponse parse_request(const std::string& request_json);
+    ApiResponse parse_request(const std::string& request_json, const std::string& path);
 
     // 处理图片分析请求
     ApiResponse handle_image_analysis(const ApiRequest& request);
 
     // 处理视频分析请求
     ApiResponse handle_video_analysis(const ApiRequest& request);
+
+    // 处理查询请求
+    ApiResponse handle_query_request(const ApiQueryRequest& request);
 
     // 将结果保存到数据库
     bool save_to_database(const AnalysisResult& result, const std::string& media_url, const std::string& media_type);
@@ -59,7 +74,7 @@ public:
     void stop();
 
     // 处理API请求
-    ApiResponse process_request(const std::string& request_json);
+    ApiResponse process_request(const std::string& request_json, const std::string& path = "/");
 
     // 获取服务器状态
     nlohmann::json get_status();

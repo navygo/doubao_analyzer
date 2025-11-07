@@ -43,6 +43,7 @@ set(SOURCES
     src/DatabaseManager.cpp
     src/DatabaseManager_extended.cpp
     src/ConfigManager.cpp
+    src/VideoKeyframeAnalyzer.cpp
 )
 
 # API服务器源文件
@@ -56,6 +57,7 @@ set(API_SOURCES
     src/DatabaseManager.cpp
     src/DatabaseManager_extended.cpp
     src/ConfigManager.cpp
+    src/VideoKeyframeAnalyzer.cpp
 )
 
 # 创建可执行文件

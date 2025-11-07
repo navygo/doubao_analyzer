@@ -130,6 +130,56 @@ std::vector<MediaAnalysisRecord> DoubaoMediaAnalyzer::query_by_tag(const std::st
     return db_manager_->query_by_tag(tag);
 }
 
+// 按URL查询
+std::vector<MediaAnalysisRecord> DoubaoMediaAnalyzer::query_by_url(const std::string &media_url)
+{
+    if (!db_manager_)
+    {
+        std::cerr << "数据库管理器未初始化" << std::endl;
+        return {};
+    }
+
+    // 使用file_path字段查询，因为media_url存储在file_path中
+    std::string condition = "file_path = '" + media_url + "'";
+    return db_manager_->query_results(condition);
+}
+
+// 按文件类型查询
+std::vector<MediaAnalysisRecord> DoubaoMediaAnalyzer::query_by_type(const std::string &file_type)
+{
+    if (!db_manager_)
+    {
+        std::cerr << "数据库管理器未初始化" << std::endl;
+        return {};
+    }
+
+    return db_manager_->query_by_type(file_type);
+}
+
+// 按日期范围查询
+std::vector<MediaAnalysisRecord> DoubaoMediaAnalyzer::query_by_date_range(const std::string &start_date, const std::string &end_date)
+{
+    if (!db_manager_)
+    {
+        std::cerr << "数据库管理器未初始化" << std::endl;
+        return {};
+    }
+
+    return db_manager_->query_by_date_range(start_date, end_date);
+}
+
+// 获取最近的记录
+std::vector<MediaAnalysisRecord> DoubaoMediaAnalyzer::get_recent_results(int limit)
+{
+    if (!db_manager_)
+    {
+        std::cerr << "数据库管理器未初始化" << std::endl;
+        return {};
+    }
+
+    return db_manager_->get_recent_results(limit);
+}
+
 // 获取数据库统计信息
 nlohmann::json DoubaoMediaAnalyzer::get_database_statistics()
 {

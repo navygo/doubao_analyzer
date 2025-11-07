@@ -165,6 +165,69 @@ std::string base64_encode_file(const std::string& file_path) {
     return base64_encode(buffer);
 }
 
+std::vector<unsigned char> base64_decode(const std::string& encoded_string) {
+    static const std::string base64_chars = 
+        "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+        "abcdefghijklmnopqrstuvwxyz"
+        "0123456789+/";
+    
+    auto is_base64 = [](unsigned char c) {
+        return (isalnum(c) || (c == '+') || (c == '/'));
+    };
+    
+    std::string trimmed_string;
+    // 移除所有空白字符
+    for (auto c : encoded_string) {
+        if (!isspace(c)) {
+            trimmed_string += c;
+        }
+    }
+    
+    size_t in_len = trimmed_string.size();
+    size_t i = 0;
+    size_t in = 0;
+    unsigned char char_array_4[4], char_array_3[3];
+    std::vector<unsigned char> ret;
+
+    while (in_len-- && (trimmed_string[in] != '=') && is_base64(trimmed_string[in])) {
+        char_array_4[i++] = trimmed_string[in]; in++;
+        if (i == 4) {
+            for (i = 0; i < 4; i++) {
+                char_array_4[i] = base64_chars.find(char_array_4[i]);
+            }
+
+            char_array_3[0] = (char_array_4[0] << 2) + ((char_array_4[1] & 0x30) >> 4);
+            char_array_3[1] = ((char_array_4[1] & 0xf) << 4) + ((char_array_4[2] & 0x3c) >> 2);
+            char_array_3[2] = ((char_array_4[2] & 0x3) << 6) + char_array_4[3];
+
+            for (i = 0; (i < 3); i++) {
+                ret.push_back(char_array_3[i]);
+            }
+            i = 0;
+        }
+    }
+
+    if (i) {
+        for (size_t j = i; j < 4; j++) {
+            char_array_4[j] = 0;
+        }
+
+        for (size_t j = 0; j < 4; j++) {
+            char_array_4[j] = base64_chars.find(char_array_4[j]);
+        }
+
+        char_array_3[0] = (char_array_4[0] << 2) + ((char_array_4[1] & 0x30) >> 4);
+        char_array_3[1] = ((char_array_4[1] & 0xf) << 4) + ((char_array_4[2] & 0x3c) >> 2);
+        char_array_3[2] = ((char_array_4[2] & 0x3) << 6) + char_array_4[3];
+
+        for (size_t j = 0; (j < i - 1); j++) {
+            ret.push_back(char_array_3[j]);
+        }
+    }
+
+    return ret;
+}
+
 // 图像处理
 std::vector<unsigned char> encode_image_to_jpeg(const cv::Mat& image, int quality) {
     std::vector<unsigned char> buffer;
@@ -321,6 +384,16 @@ std::string get_current_timestamp() {
     std::stringstream ss;
     ss << std::put_time(std::localtime(&time_t), "%Y-%m-%d %H:%M:%S");
     ss << '.' << std::setfill('0') << std::setw(3) << ms.count();
+
+    return ss.str();
+}
+
+std::string get_formatted_timestamp() {
+    auto now = std::chrono::system_clock::now();
+    auto time_t = std::chrono::system_clock::to_time_t(now);
+
+    std::stringstream ss;
+    ss << std::put_time(std::localtime(&time_t), "%Y-%m-%d %H:%M:%S");
 
     return ss.str();
 }

@@ -6,6 +6,7 @@
 #include <nlohmann/json.hpp>
 #include "DatabaseManager.hpp"
 #include "ConfigManager.hpp"
+#include "VideoKeyframeAnalyzer.hpp"
 
 struct AnalysisResult
 {
@@ -25,6 +26,7 @@ private:
     std::string api_key_;
     std::string base_url_;
     std::unique_ptr<DatabaseManager> db_manager_;
+    std::unique_ptr<VideoKeyframeAnalyzer> video_analyzer_;
 
 public:
     explicit DoubaoMediaAnalyzer(const std::string &api_key);
@@ -42,6 +44,12 @@ public:
                                         const std::string &prompt,
                                         int max_tokens = 2000,
                                         int num_frames = 5);
+    
+    // 高效视频分析（使用关键帧，无需完整下载）
+    AnalysisResult analyze_video_efficiently(const std::string &video_url,
+                                           const std::string &prompt,
+                                           int max_tokens = 2000,
+                                           const std::string &method = "keyframes");
 
     // 批量分析
     std::vector<AnalysisResult> batch_analyze(const std::string &media_folder,
@@ -58,6 +66,10 @@ public:
     bool save_batch_results_to_database(const std::vector<AnalysisResult> &results);
     std::vector<MediaAnalysisRecord> query_database_results(const std::string &condition = "");
     std::vector<MediaAnalysisRecord> query_by_tag(const std::string &tag);
+    std::vector<MediaAnalysisRecord> query_by_url(const std::string &media_url);
+    std::vector<MediaAnalysisRecord> query_by_type(const std::string &file_type);
+    std::vector<MediaAnalysisRecord> query_by_date_range(const std::string &start_date, const std::string &end_date);
+    std::vector<MediaAnalysisRecord> get_recent_results(int limit = 10);
     nlohmann::json get_database_statistics();
 
     virtual ~DoubaoMediaAnalyzer(); // 添加这行

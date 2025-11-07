@@ -105,6 +105,10 @@ void ApiServer::start()
     }
 
     std::cout << "🚀 API服务器已启动，监听地址: " << host_ << ":" << port_ << std::endl;
+    std::cout << "📋 可用的API路由:" << std::endl;
+    std::cout << "   - POST /api/analyze : 分析图片或视频" << std::endl;
+    std::cout << "   - POST /api/query : 查询已分析的结果" << std::endl;
+    std::cout << "   - GET /api/status : 获取服务器状态" << std::endl;
 
     // 主循环，接受和处理连接
     while (true)
@@ -131,6 +135,18 @@ void ApiServer::start()
 
         // 提取请求体
         std::string request_body;
+        std::string request_path = "/"; // 默认路径
+
+        // 提取请求路径
+        size_t path_start = request.find(" ");
+        if (path_start != std::string::npos)
+        {
+            size_t path_end = request.find(" ", path_start + 1);
+            if (path_end != std::string::npos)
+            {
+                request_path = request.substr(path_start + 1, path_end - path_start - 1);
+            }
+        }
         size_t body_start = request.find("\r\n\r\n");
         if (body_start != std::string::npos)
         {
@@ -159,7 +175,7 @@ void ApiServer::start()
         }
 
         // 解析请求并处理
-        ApiResponse response = process_request(request_body);
+        ApiResponse response = process_request(request_body, request_path);
 
         // 构建完整响应JSON
         nlohmann::json response_json_obj;
@@ -174,7 +190,15 @@ void ApiServer::start()
 
         // 发送响应
         std::string response_json = response_json_obj.dump();
-        send(new_socket, response_json.c_str(), response_json.length(), 0);
+        
+        // 构建HTTP响应
+        std::string http_response = "HTTP/1.1 200 OK\r\n";
+        http_response += "Content-Type: application/json\r\n";
+        http_response += "Content-Length: " + std::to_string(response_json.length()) + "\r\n";
+        http_response += "\r\n";
+        http_response += response_json;
+        
+        send(new_socket, http_response.c_str(), http_response.length(), 0);
         std::cout << "📤 发送响应: " << response_json << std::endl;
 
         close(new_socket);
@@ -186,60 +210,105 @@ void ApiServer::stop()
     std::cout << "🛑 API服务器已停止" << std::endl;
 }
 
-ApiResponse ApiServer::process_request(const std::string &request_json)
+ApiResponse ApiServer::process_request(const std::string &request_json, const std::string &path)
 {
     ApiResponse response;
 
     try
     {
-        // 解析JSON请求
-        nlohmann::json request_data = nlohmann::json::parse(request_json);
-
-        // 检查必要字段
-        if (!request_data.contains("media_type") || !request_data.contains("media_url"))
+        // 处理状态查询请求
+        if (path == "/api/status")
         {
-            response.success = false;
-            response.message = "请求缺少必要字段: media_type 和 media_url";
-            response.error = "Invalid request format";
+            response.success = true;
+            response.message = "服务器状态查询成功";
+            response.data = get_status();
+            response.response_time = 0.0;
             return response;
         }
 
-        ApiRequest request;
-        request.media_type = request_data["media_type"].get<std::string>();
-        request.media_url = request_data["media_url"].get<std::string>();
-        request.prompt = request_data.value("prompt", "");
-        request.max_tokens = request_data.value("max_tokens", 1500);
-        request.video_frames = request_data.value("video_frames", 5);
-        request.save_to_db = request_data.value("save_to_db", true);
-
-        // 验证媒体类型
-        if (request.media_type != "image" && request.media_type != "video")
+        // 处理查询请求
+        if (path == "/api/query")
         {
-            response.success = false;
-            response.message = "无效的媒体类型，必须是 'image' 或 'video'";
-            response.error = "Invalid media type";
+            // 解析JSON请求
+            nlohmann::json request_data = nlohmann::json::parse(request_json);
+
+            ApiQueryRequest query_request;
+            query_request.query_type = request_data.value("query_type", "all");
+            query_request.tag = request_data.value("tag", "");
+            query_request.file_type = request_data.value("file_type", "");
+            query_request.start_date = request_data.value("start_date", "");
+            query_request.end_date = request_data.value("end_date", "");
+            query_request.limit = request_data.value("limit", 10);
+            query_request.condition = request_data.value("condition", "");
+            query_request.media_url = request_data.value("media_url", "");
+
+            // 处理查询请求
+            double start_time = utils::get_current_time();
+            response = handle_query_request(query_request);
+            response.response_time = utils::get_current_time() - start_time;
             return response;
         }
 
-        // 处理请求
-        double start_time = utils::get_current_time();
-
-        if (request.media_type == "image")
+        // 处理分析请求
+        if (path == "/api/analyze")
         {
-            response = handle_image_analysis(request);
-        }
-        else
-        {
-            response = handle_video_analysis(request);
+            // 解析JSON请求
+            nlohmann::json request_data = nlohmann::json::parse(request_json);
+
+            // 检查必要字段
+            if (!request_data.contains("media_type") || !request_data.contains("media_url"))
+            {
+                response.success = false;
+                response.message = "请求缺少必要字段: media_type 和 media_url";
+                response.error = "Invalid request format";
+                return response;
+            }
+
+            ApiRequest request;
+            request.media_type = request_data["media_type"].get<std::string>();
+            request.media_url = request_data["media_url"].get<std::string>();
+            request.prompt = request_data.value("prompt", "");
+            request.max_tokens = request_data.value("max_tokens", 1500);
+            request.video_frames = request_data.value("video_frames", 5);
+            request.save_to_db = request_data.value("save_to_db", true);
+
+            // 验证媒体类型
+            if (request.media_type != "image" && request.media_type != "video")
+            {
+                response.success = false;
+                response.message = "无效的媒体类型，必须是 'image' 或 'video'";
+                response.error = "Invalid media type";
+                return response;
+            }
+
+            // 处理请求
+            double start_time = utils::get_current_time();
+
+            if (request.media_type == "image")
+            {
+                response = handle_image_analysis(request);
+            }
+            else
+            {
+                response = handle_video_analysis(request);
+            }
+
+            response.response_time = utils::get_current_time() - start_time;
+            return response;
         }
 
-        response.response_time = utils::get_current_time() - start_time;
+        // 未知路径
+        response.success = false;
+        response.message = "未知的API路径: " + path;
+        response.error = "Unknown API path";
+        response.response_time = 0.0;
     }
     catch (const std::exception &e)
     {
         response.success = false;
         response.message = "处理请求时发生异常: " + std::string(e.what());
         response.error = "Request processing error";
+        response.response_time = 0.0;
     }
 
     return response;
@@ -317,58 +386,89 @@ ApiResponse ApiServer::handle_image_analysis(const ApiRequest &request)
 ApiResponse ApiServer::handle_video_analysis(const ApiRequest &request)
 {
     ApiResponse response;
+    nlohmann::json timing_info = nlohmann::json::object();
+    double total_start_time = utils::get_current_time();
+
+    std::cout << "🎬 [视频分析] 开始处理视频分析请求: " << request.media_url << std::endl;
+    std::cout << "⏰ [时间戳] 请求接收时间: " << utils::get_formatted_timestamp() << std::endl;
 
     try
     {
-        // 下载视频到临时文件
-        std::string temp_file = "/tmp/api_video_" + std::string(utils::get_current_timestamp()) + ".mp4";
-        if (!utils::download_file(request.media_url, temp_file))
-        {
-            response.success = false;
-            response.message = "视频下载失败: " + request.media_url;
-            response.error = "Video download failed";
-            return response;
-        }
+        // 使用高效视频分析方法，无需下载整个视频
+        double extraction_start_time = utils::get_current_time();
+        std::cout << "🎬 [视频分析] 开始高效分析视频，无需完整下载" << std::endl;
+        std::cout << "⏰ [时间戳] 分析开始时间: " << utils::get_formatted_timestamp() << std::endl;
 
         // 使用默认提示词或自定义提示词
         std::string prompt = request.prompt.empty() ? get_video_prompt() : request.prompt;
 
         // 分析视频
-        AnalysisResult result = analyzer_->analyze_single_video(
-            temp_file,
+        double analysis_start_time = utils::get_current_time();
+        std::cout << "🔍 [视频分析] 开始分析视频..." << std::endl;
+        std::cout << "⏰ [时间戳] 分析开始时间: " << utils::get_formatted_timestamp() << std::endl;
+        std::cout << "📊 [参数] 提示词长度: " << prompt.length() << " 字符" << std::endl;
+        std::cout << "📊 [参数] 最大令牌数: " << request.max_tokens << std::endl;
+        std::cout << "📊 [参数] 提取帧数: " << request.video_frames << std::endl;
+
+        AnalysisResult result = analyzer_->analyze_video_efficiently(
+            request.media_url,
             prompt,
             request.max_tokens,
-            request.video_frames);
+            "keyframes"); // 使用关键帧提取方法
 
-        // 清理临时文件
-        std::filesystem::remove(temp_file);
+        double analysis_time = utils::get_current_time() - analysis_start_time;
+        timing_info["analysis_seconds"] = analysis_time;
+        std::cout << "✅ [视频分析] 分析完成，耗时: " << analysis_time << " 秒" << std::endl;
+        std::cout << "⏰ [时间戳] 分析完成时间: " << utils::get_formatted_timestamp() << std::endl;
+
+        // 高效分析方法无需清理临时文件（已自动处理）
 
         if (result.success)
         {
+            // 保存到数据库
+            double db_start_time = utils::get_current_time();
+            if (request.save_to_db)
+            {
+                std::cout << "💾 [数据库] 开始保存分析结果到数据库..." << std::endl;
+                std::cout << "⏰ [时间戳] 数据库保存开始时间: " << utils::get_formatted_timestamp() << std::endl;
+
+                if (save_to_database(result, request.media_url, "video"))
+                {
+                    double db_time = utils::get_current_time() - db_start_time;
+                    timing_info["database_seconds"] = db_time;
+                    std::cout << "✅ [数据库] 保存完成，耗时: " << db_time << " 秒" << std::endl;
+                    std::cout << "⏰ [时间戳] 数据库保存完成时间: " << utils::get_formatted_timestamp() << std::endl;
+
+                    response.data["saved_to_db"] = true;
+                }
+                else
+                {
+                    std::cout << "❌ [数据库] 保存失败" << std::endl;
+                    response.data["saved_to_db"] = false;
+                    response.message += "，但结果未保存到数据库";
+                }
+            }
+            else
+            {
+                std::cout << "⏭️ [数据库] 跳过保存（save_to_db=false）" << std::endl;
+            }
+
             response.success = true;
             response.message = "视频分析成功";
             response.data = {
                 {"content", result.content},
                 {"tags", analyzer_->extract_tags(result.content)},
                 {"response_time", result.response_time},
-                {"usage", result.usage}};
+                {"usage", result.usage},
+                {"timing", timing_info}};
 
-            // 保存到数据库
-            if (request.save_to_db)
-            {
-                if (save_to_database(result, request.media_url, "video"))
-                {
-                    response.data["saved_to_db"] = true;
-                }
-                else
-                {
-                    response.data["saved_to_db"] = false;
-                    response.message += "，但结果未保存到数据库";
-                }
-            }
+            double total_time = utils::get_current_time() - total_start_time;
+            std::cout << "🎉 [完成] 视频分析请求处理完成，总耗时: " << total_time << " 秒" << std::endl;
+            std::cout << "⏰ [时间戳] 请求处理完成时间: " << utils::get_formatted_timestamp() << std::endl;
         }
         else
         {
+            std::cout << "❌ [错误] 视频分析失败: " << result.error << std::endl;
             response.success = false;
             response.message = "视频分析失败: " + result.error;
             response.error = result.error;
@@ -376,6 +476,7 @@ ApiResponse ApiServer::handle_video_analysis(const ApiRequest &request)
     }
     catch (const std::exception &e)
     {
+        std::cout << "❌ [异常] 视频分析异常: " << e.what() << std::endl;
         response.success = false;
         response.message = "视频分析异常: " + std::string(e.what());
         response.error = "Video analysis error";
@@ -422,4 +523,104 @@ nlohmann::json ApiServer::get_status()
     }
 
     return status;
+}
+
+ApiResponse ApiServer::handle_query_request(const ApiQueryRequest &request)
+{
+    ApiResponse response;
+
+    try
+    {
+        std::vector<MediaAnalysisRecord> results;
+
+        // 根据查询类型执行不同的查询
+        if (request.query_type == "all")
+        {
+            results = analyzer_->query_database_results(request.condition);
+        }
+        else if (request.query_type == "tag")
+        {
+            if (request.tag.empty())
+            {
+                response.success = false;
+                response.message = "查询类型为'tag'时，必须提供'tag'参数";
+                response.error = "Missing tag parameter";
+                return response;
+            }
+            results = analyzer_->query_by_tag(request.tag);
+        }
+        else if (request.query_type == "type")
+        {
+            if (request.file_type.empty())
+            {
+                response.success = false;
+                response.message = "查询类型为'type'时，必须提供'file_type'参数";
+                response.error = "Missing file_type parameter";
+                return response;
+            }
+            results = analyzer_->query_by_type(request.file_type);
+        }
+        else if (request.query_type == "date_range")
+        {
+            if (request.start_date.empty() || request.end_date.empty())
+            {
+                response.success = false;
+                response.message = "查询类型为'date_range'时，必须提供'start_date'和'end_date'参数";
+                response.error = "Missing date parameters";
+                return response;
+            }
+            results = analyzer_->query_by_date_range(request.start_date, request.end_date);
+        }
+        else if (request.query_type == "recent")
+        {
+            results = analyzer_->get_recent_results(request.limit);
+        }
+        else if (request.query_type == "url")
+        {
+            if (request.media_url.empty())
+            {
+                response.success = false;
+                response.message = "查询类型为'url'时，必须提供'media_url'参数";
+                response.error = "Missing media_url parameter";
+                return response;
+            }
+            results = analyzer_->query_by_url(request.media_url);
+        }
+        else
+        {
+            response.success = false;
+            response.message = "不支持的查询类型: " + request.query_type;
+            response.error = "Unsupported query type";
+            return response;
+        }
+
+        // 将结果转换为JSON
+        nlohmann::json results_json = nlohmann::json::array();
+        for (const auto &record : results)
+        {
+            nlohmann::json record_json;
+            record_json["id"] = record.id;
+            record_json["file_path"] = record.file_path;
+            record_json["file_name"] = record.file_name;
+            record_json["file_type"] = record.file_type;
+            record_json["analysis_result"] = record.analysis_result;
+            record_json["tags"] = record.tags;
+            record_json["response_time"] = record.response_time;
+            record_json["created_at"] = record.created_at;
+            results_json.push_back(record_json);
+        }
+
+        response.success = true;
+        response.message = "查询成功，共找到 " + std::to_string(results.size()) + " 条记录";
+        response.data["results"] = results_json;
+        response.data["count"] = results.size();
+    }
+    catch (const std::exception &e)
+    {
+        response.success = false;
+        response.message = "查询失败: " + std::string(e.what());
+        response.error = "Query error";
+    }
+
+    return response;
 }

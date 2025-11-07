@@ -36,6 +36,13 @@ DoubaoMediaAnalyzer::DoubaoMediaAnalyzer(const std::string &api_key)
             config::DB_NAME,
             config::DB_PORT);
     }
+    
+    // 初始化视频分析器
+    try {
+        video_analyzer_ = std::make_unique<VideoKeyframeAnalyzer>();
+    } catch (const std::exception& e) {
+        std::cerr << "初始化视频分析器失败: " << e.what() << std::endl;
+    }
 }
 
 DoubaoMediaAnalyzer::~DoubaoMediaAnalyzer()
@@ -126,7 +133,14 @@ AnalysisResult DoubaoMediaAnalyzer::analyze_single_video(const std::string &vide
         }
 
         std::cout << "🎬 正在提取视频关键帧..." << std::endl;
+        std::cout << "⏰ [时间戳] 帧提取开始时间: " << utils::get_formatted_timestamp() << std::endl;
+        auto frames_start_time = utils::get_current_time();
+
         auto frames_base64 = extract_video_frames(video_path, num_frames);
+
+        double frames_time = utils::get_current_time() - frames_start_time;
+        std::cout << "⏱️ [耗时] 帧提取耗时: " << frames_time << " 秒" << std::endl;
+        std::cout << "⏰ [时间戳] 帧提取完成时间: " << utils::get_formatted_timestamp() << std::endl;
 
         if (frames_base64.empty())
         {
@@ -157,14 +171,135 @@ AnalysisResult DoubaoMediaAnalyzer::analyze_single_video(const std::string &vide
             {"temperature", config::DEFAULT_TEMPERATURE},
             {"stream", false}};
 
+        std::cout << "📡 [API调用] 开始发送分析请求..." << std::endl;
+        std::cout << "⏰ [时间戳] API请求开始时间: " << utils::get_formatted_timestamp() << std::endl;
+        std::cout << "📊 [参数] 请求帧数: " << frames_base64.size() << std::endl;
+        std::cout << "📊 [参数] 最大令牌数: " << max_tokens << std::endl;
+
         double start_time = utils::get_current_time();
         result = send_analysis_request(payload, config::VIDEO_ANALYSIS_TIMEOUT);
         result.response_time = utils::get_current_time() - start_time;
+
+        std::cout << "⏱️ [耗时] API请求耗时: " << result.response_time << " 秒" << std::endl;
+        std::cout << "⏰ [时间戳] API请求完成时间: " << utils::get_formatted_timestamp() << std::endl;
+
+        if (result.success) {
+            std::cout << "📊 [响应] 令牌使用情况: " << result.usage.dump() << std::endl;
+        }
     }
     catch (const std::exception &e)
     {
         result.success = false;
         result.error = "视频分析异常: " + std::string(e.what());
+    }
+
+    return result;
+}
+
+AnalysisResult DoubaoMediaAnalyzer::analyze_video_efficiently(const std::string &video_url,
+                                                        const std::string &prompt,
+                                                        int max_tokens,
+                                                        const std::string &method)
+{
+    AnalysisResult result;
+
+    try
+    {
+        if (!video_analyzer_)
+        {
+            result.success = false;
+            result.error = "视频分析器未初始化";
+            return result;
+        }
+
+        std::cout << "🎬 正在高效分析视频（无需完整下载）..." << std::endl;
+        std::cout << "⏰ [时间戳] 分析开始时间: " << utils::get_formatted_timestamp() << std::endl;
+        std::cout << "🔗 视频URL: " << video_url << std::endl;
+        std::cout << "📊 [方法] 使用 " << method << " 方法提取帧" << std::endl;
+
+        auto frames_start_time = utils::get_current_time();
+
+        // 提取关键帧或采样帧
+        std::vector<std::string> frames_base64;
+        if (method == "keyframes") {
+            frames_base64 = video_analyzer_->extract_keyframes(video_url);
+        } else {
+            frames_base64 = video_analyzer_->extract_sample_frames(video_url);
+        }
+
+        double frames_time = utils::get_current_time() - frames_start_time;
+        std::cout << "⏱️ [耗时] 帧提取耗时: " << frames_time << " 秒" << std::endl;
+        std::cout << "⏰ [时间戳] 帧提取完成时间: " << utils::get_formatted_timestamp() << std::endl;
+
+        if (frames_base64.empty())
+        {
+            result.success = false;
+            result.error = "无法从视频中提取有效帧";
+            return result;
+        }
+
+        std::cout << "✅ 成功提取 " << frames_base64.size() << " 个帧" << std::endl;
+
+        // 获取视频元数据
+        VideoMetadata metadata = video_analyzer_->get_video_metadata(video_url);
+        std::cout << "📹 视频信息: " << metadata.width << "x" << metadata.height
+                  << ", " << metadata.duration << "秒, " << metadata.fps << " FPS" << std::endl;
+
+        // 构建多图消息
+        nlohmann::json content = nlohmann::json::array();
+        content.push_back({{"type", "text"}, {"text", prompt}});
+
+        for (size_t i = 0; i < frames_base64.size(); ++i)
+        {
+            content.push_back({{"type", "image_url"},
+                               {"image_url", {{"url", "data:image/jpeg;base64," + frames_base64[i]}, {"detail", "low"}}}});
+
+            content.push_back({{"type", "text"},
+                               {"text", "这是视频的第" + std::to_string(i + 1) + "个关键帧"}});
+        }
+
+        nlohmann::json payload = {
+            {"model", config::MODEL_NAME},
+            {"messages", {{{"role", "user"}, {"content", content}}}},
+            {"max_tokens", max_tokens},
+            {"temperature", config::DEFAULT_TEMPERATURE},
+            {"stream", false}};
+
+        std::cout << "📡 [API调用] 开始发送分析请求..." << std::endl;
+        std::cout << "⏰ [时间戳] API请求开始时间: " << utils::get_formatted_timestamp() << std::endl;
+        std::cout << "📊 [参数] 请求帧数: " << frames_base64.size() << std::endl;
+        std::cout << "📊 [参数] 最大令牌数: " << max_tokens << std::endl;
+
+        double start_time = utils::get_current_time();
+        result = send_analysis_request(payload, config::VIDEO_ANALYSIS_TIMEOUT);
+        result.response_time = utils::get_current_time() - start_time;
+
+        std::cout << "⏱️ [耗时] API请求耗时: " << result.response_time << " 秒" << std::endl;
+        std::cout << "⏰ [时间戳] API请求完成时间: " << utils::get_formatted_timestamp() << std::endl;
+
+        if (result.success) {
+            std::cout << "📊 [响应] 令牌使用情况: " << result.usage.dump() << std::endl;
+        }
+        
+        // 将视频元数据添加到响应中
+        result.raw_response["video_metadata"] = {
+            {"width", metadata.width},
+            {"height", metadata.height},
+            {"duration", metadata.duration},
+            {"fps", metadata.fps},
+            {"codec", metadata.codec},
+            {"url", metadata.url}
+        };
+        
+        result.raw_response["extraction_method"] = method;
+        result.raw_response["extraction_time"] = frames_time;
+        result.raw_response["frames_extracted"] = frames_base64.size();
+        
+    }
+    catch (const std::exception &e)
+    {
+        result.success = false;
+        result.error = "高效视频分析异常: " + std::string(e.what());
     }
 
     return result;
@@ -305,6 +440,7 @@ std::vector<std::string> DoubaoMediaAnalyzer::extract_video_frames(const std::st
 
         std::cout << "📹 视频信息: " << total_frames << "帧, "
                   << fps << "FPS, " << duration << "秒" << std::endl;
+        std::cout << "⏰ [时间戳] 视频信息获取完成: " << utils::get_formatted_timestamp() << std::endl;
 
         // 计算提取帧的位置
         std::vector<int> frame_positions;
@@ -325,8 +461,13 @@ std::vector<std::string> DoubaoMediaAnalyzer::extract_video_frames(const std::st
             frame_positions.push_back(total_frames - 1); // 确保包含最后一帧
         }
 
+        std::cout << "🔄 [帧处理] 开始提取关键帧..." << std::endl;
+        std::cout << "⏰ [时间戳] 帧处理开始时间: " << utils::get_formatted_timestamp() << std::endl;
+
         for (size_t i = 0; i < frame_positions.size(); ++i)
         {
+            double frame_start_time = utils::get_current_time();
+
             cap.set(cv::CAP_PROP_POS_FRAMES, frame_positions[i]);
             cv::Mat frame;
             bool ret = cap.read(frame);
@@ -341,10 +482,14 @@ std::vector<std::string> DoubaoMediaAnalyzer::extract_video_frames(const std::st
                 std::string frame_base64 = utils::base64_encode(jpeg_data);
                 frames_base64.push_back(frame_base64);
 
-                std::cout << "  提取第" << i + 1 << "/" << frame_positions.size()
-                          << "帧 (位置: " << frame_positions[i] << "/" << total_frames << ")" << std::endl;
+                double frame_time = utils::get_current_time() - frame_start_time;
+                std::cout << "  ✅ 提取第" << i + 1 << "/" << frame_positions.size()
+                          << "帧 (位置: " << frame_positions[i] << "/" << total_frames << "), 耗时: " 
+                          << frame_time << "秒" << std::endl;
             }
         }
+
+        std::cout << "⏰ [时间戳] 帧处理完成时间: " << utils::get_formatted_timestamp() << std::endl;
 
         cap.release();
     }
