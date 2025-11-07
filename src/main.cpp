@@ -1,6 +1,7 @@
 #include "DoubaoMediaAnalyzer.hpp"
 #include "utils.hpp"
 #include "config.hpp"
+#include "GPUManager.hpp"
 #include <iostream>
 #include <fstream>
 #include <cstring>
@@ -402,6 +403,9 @@ int main(int argc, char *argv[])
 
     std::cout << "🚀 豆包大模型媒体分析调试工具（支持图片和视频）" << std::endl;
     std::cout << std::string(60, '=') << std::endl;
+
+    // 初始化GPU管理器
+    gpu::GPUManager::initialize();
 
     // 初始化数据库
     if (save_to_db || !query_db.empty() || !query_tag.empty() || show_db_stats)

@@ -5,6 +5,7 @@
 #include <memory>
 #include <nlohmann/json.hpp>
 #include "DoubaoMediaAnalyzer.hpp"
+#include "TaskManager.hpp"
 
 // API请求结构
 struct ApiRequest {
@@ -57,6 +58,9 @@ private:
 
     // 处理查询请求
     ApiResponse handle_query_request(const ApiQueryRequest& request);
+    
+    // 处理批量分析请求
+    ApiResponse handle_batch_analysis(const std::vector<ApiRequest>& requests);
 
     // 将结果保存到数据库
     bool save_to_database(const AnalysisResult& result, const std::string& media_url, const std::string& media_type);

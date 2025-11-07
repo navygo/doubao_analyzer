@@ -9,6 +9,7 @@ set(CMAKE_BUILD_TYPE "Debug")
 
 # 查找依赖
 find_package(OpenCV REQUIRED)
+find_package(CUDA REQUIRED)  # 添加CUDA支持
 find_package(CURL REQUIRED)
 find_package(PkgConfig REQUIRED)
 
@@ -44,6 +45,8 @@ set(SOURCES
     src/DatabaseManager_extended.cpp
     src/ConfigManager.cpp
     src/VideoKeyframeAnalyzer.cpp
+    src/TaskManager.cpp
+    src/GPUManager.cpp
 )
 
 # API服务器源文件
@@ -58,6 +61,8 @@ set(API_SOURCES
     src/DatabaseManager_extended.cpp
     src/ConfigManager.cpp
     src/VideoKeyframeAnalyzer.cpp
+    src/TaskManager.cpp
+    src/GPUManager.cpp
 )
 
 # 创建可执行文件
@@ -67,6 +72,7 @@ add_executable(doubao_api_server ${API_SOURCES})
 # 链接库
 target_link_libraries(doubao_analyzer
     ${OpenCV_LIBS}
+    ${CUDA_LIBRARIES}
     CURL::libcurl
     ${MYSQL_LIBRARIES}
 )
@@ -74,6 +80,7 @@ target_link_libraries(doubao_analyzer
 # API服务器链接库
 target_link_libraries(doubao_api_server
     ${OpenCV_LIBS}
+    ${CUDA_LIBRARIES}
     CURL::libcurl
     ${MYSQL_LIBRARIES}
 )

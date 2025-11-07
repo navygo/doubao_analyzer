@@ -1,5 +1,6 @@
 #include "ApiServer.hpp"
 #include "utils.hpp"
+#include "GPUManager.hpp"
 #include <iostream>
 #include <string>
 #include <signal.h>
@@ -73,6 +74,9 @@ int main(int argc, char *argv[])
     // 设置信号处理
     signal(SIGINT, signal_handler);
     signal(SIGTERM, signal_handler);
+
+    // 初始化GPU管理器
+    gpu::GPUManager::initialize();
 
     // 创建并初始化API服务器
     g_server = std::make_unique<ApiServer>(api_key, port, host);
