@@ -333,3 +333,8 @@ doubao_analyzer --api-key YOUR_KEY --image test/test.jpg --save-to-db
 ✅ 完整的错误处理
 
 代码已针对Ubuntu系统优化，使用标准的C++17特性和现代CMake构建系统。
+
+# Ubuntu/Debian系统
+1. 安装FFmpeg工具
+sudo apt update
+sudo apt install ffmpeg
