@@ -147,46 +147,133 @@ namespace gpu {
                 // 使用UMat进行GPU加速处理
                 cv::UMat u_image = image.getUMat(cv::ACCESS_READ);
                 cv::UMat u_resized;
+
+                // 确保UMat对象正确初始化
+                if (u_image.empty()) {
+                    throw cv::Exception(cv::Error::StsNullPtr, "GPU image is empty", 
+                                      "resize_image", __FILE__, __LINE__);
+                }
+
                 cv::resize(u_image, u_resized, cv::Size(new_width, new_height));
-                resized = u_resized.getMat(cv::ACCESS_READ);
+
+                // 检查结果是否有效
+                if (u_resized.empty()) {
+                    throw cv::Exception(cv::Error::StsInternal, "GPU resize operation failed", 
+                                      "resize_image", __FILE__, __LINE__);
+                }
+
+                // 使用更安全的转换方式
+                try {
+                    u_resized.copyTo(resized);
+                } catch (const cv::Exception& e) {
+                    std::cerr << "⚠️ GPU到CPU转换失败: " << e.what() << std::endl;
+                    // 清理资源并回退到CPU处理
+                    u_image.release();
+                    u_resized.release();
+                    throw e;
+                }
+
+                // 确保释放UMat资源
+                u_image.release();
+                u_resized.release();
+
                 return resized;
             } catch (const cv::Exception& e) {
                 std::cerr << "⚠️ GPU图像缩放失败，回退到CPU处理: " << e.what() << std::endl;
+                // 继续执行CPU版本
+            } catch (const std::exception& e) {
+                std::cerr << "⚠️ GPU处理出现异常，回退到CPU处理: " << e.what() << std::endl;
                 // 继续执行CPU版本
             }
         }
 
         // CPU版本
-        cv::resize(image, resized, cv::Size(new_width, new_height));
-        return resized;
+        try {
+            cv::resize(image, resized, cv::Size(new_width, new_height));
+            return resized;
+        } catch (const cv::Exception& e) {
+            std::cerr << "❌ CPU图像缩放失败: " << e.what() << std::endl;
+            return cv::Mat();
+        }
     }
 
     std::vector<unsigned char> GPUManager::encode_image_to_jpeg(const cv::Mat& image, int quality) {
         std::vector<unsigned char> buffer;
         std::vector<int> params = {cv::IMWRITE_JPEG_QUALITY, quality};
 
+        // 检查输入图像
+        if (image.empty()) {
+            std::cerr << "⚠️ 输入图像为空，无法编码" << std::endl;
+            return buffer;
+        }
+
         // 尝试使用GPU加速
         if (is_gpu_available()) {
+            cv::UMat u_image;
+            cv::UMat u_rgb;
+
             try {
                 // 使用UMat进行GPU加速处理
-                cv::UMat u_image = image.getUMat(cv::ACCESS_READ);
+                image.copyTo(u_image);
+
+                // 确保UMat对象正确初始化
+                if (u_image.empty()) {
+                    throw cv::Exception(cv::Error::StsNullPtr, "GPU image is empty", 
+                                      "encode_image_to_jpeg", __FILE__, __LINE__);
+                }
 
                 // 颜色空间转换
-                cv::UMat u_rgb;
                 cv::cvtColor(u_image, u_rgb, cv::COLOR_BGR2RGB);
 
+                // 检查转换结果
+                if (u_rgb.empty()) {
+                    throw cv::Exception(cv::Error::StsInternal, "GPU color conversion failed", 
+                                      "encode_image_to_jpeg", __FILE__, __LINE__);
+                }
+
                 // 下载回CPU并编码为JPEG
-                cv::Mat rgb_image = u_rgb.getMat(cv::ACCESS_READ);
-                cv::imencode(".jpg", rgb_image, buffer, params);
+                cv::Mat rgb_image;
+                try {
+                    u_rgb.copyTo(rgb_image);
+                } catch (const cv::Exception& e) {
+                    std::cerr << "⚠️ GPU到CPU转换失败: " << e.what() << std::endl;
+                    // 清理资源并回退到CPU处理
+                    u_image.release();
+                    u_rgb.release();
+                    throw e;
+                }
+
+                // 确保释放UMat资源
+                u_image.release();
+                u_rgb.release();
+
+                if (!rgb_image.empty()) {
+                    cv::imencode(".jpg", rgb_image, buffer, params);
+                }
+
                 return buffer;
             } catch (const cv::Exception& e) {
                 std::cerr << "⚠️ GPU图像编码失败，回退到CPU处理: " << e.what() << std::endl;
+                // 确保资源释放
+                u_image.release();
+                u_rgb.release();
+                // 继续执行CPU版本
+            } catch (const std::exception& e) {
+                std::cerr << "⚠️ GPU处理出现异常，回退到CPU处理: " << e.what() << std::endl;
+                // 确保资源释放
+                u_image.release();
+                u_rgb.release();
                 // 继续执行CPU版本
             }
         }
 
         // CPU版本
-        cv::imencode(".jpg", image, buffer, params);
+        try {
+            cv::imencode(".jpg", image, buffer, params);
+        } catch (const cv::Exception& e) {
+            std::cerr << "❌ CPU图像编码失败: " << e.what() << std::endl;
+        }
+
         return buffer;
     }
 }

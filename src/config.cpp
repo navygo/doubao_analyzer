@@ -4,7 +4,7 @@ namespace config
 {
     // API配置
     const std::string BASE_URL = "https://ark.cn-beijing.volces.com/api/v3/chat/completions";
-    const std::string MODEL_NAME = "doubao-1.5-vision-lite-250315";
+    const std::string MODEL_NAME = "doubao-1-5-vision-pro-32k-250115";
     const std::string API_KEY = ""; // 默认空值，需要在命令行参数中指定
 
     // 默认值
