@@ -91,6 +91,16 @@ public:
     // 获取统计信息
     nlohmann::json get_statistics();
 
+    // --- Refresh token management ---
+    // 创建 refresh token 记录（token_hash 为 SHA256 hex）
+    bool create_refresh_token_record(const std::string &token_hash, const std::string &user_id, long created_at, long expires_at);
+
+    // 验证 refresh token，返回 true 并填充 out_user_id
+    bool verify_refresh_token_record(const std::string &token_hash, std::string &out_user_id);
+
+    // 撤销 refresh token（删除记录）
+    bool revoke_refresh_token_record(const std::string &token_hash);
+
     // 备份数据库
     bool backup_database(const std::string &backup_path);
 

@@ -10,6 +10,8 @@
 - 💾 **数据库存储**: 支持将分析结果存储到MySQL数据库
 - 🌐 **RESTful API**: 提供简单的HTTP接口
 - 🔍 **结果查询**: 支持多种查询方式检索已分析的结果
+- 🔐 **JWT认证**: 基于JWT的身份认证和授权机制
+- 👥 **用户管理**: 支持用户注册、登录和权限管理
 
 ## 安装与编译
 
@@ -39,32 +41,113 @@ doubao_api_server --api-key YOUR_API_KEY --port 8080 --host 0.0.0.0
 doubao_api_server --help
 ```
 
+#### 认证机制
+
+- 使用管理员账号密码登录获取访问令牌
+- 访问令牌有效期15分钟
+- 刷新令牌有效期7天
+- 令牌验证失败返回401 Unauthorized
+- 用户名密码错误返回401 Unauthorized
+
 ### API接口
 
-#### 认证（Bearer JWT）
+#### 认证与用户管理（JWT）
 
-本服务使用基于 `Bearer JWT` 的简单认证方案。默认有两个环境变量用于登录验证（仅示例）:
+本服务使用基于 `Bearer JWT` 的认证方案，支持完整的用户注册、登录和管理功能。
 
-- `ADMIN_USER`（默认: `admin`）
-- `ADMIN_PASS`（默认: `password`）
+##### 用户登录 - POST /api/auth
 
-获取 token：
+用户登录获取访问令牌和刷新令牌。
 
-请求: `POST /api/auth`
-
-请求示例:
+**请求示例:**
 ```json
-{ "username": "admin", "password": "password" }
+{
+    "username": "admin",
+    "password": "admin123"
+}
 ```
 
-响应示例:
+**响应示例:**
 ```json
-{ "success": true, "data": { "token": "<JWT>", "expires_in": 900 } }
+{
+    "success": true,
+    "message": "登录成功",
+    "data": {
+        "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+        "expires_in": 900,
+        "refresh_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+        "refresh_expires_in": 604800
+    }
+}
 ```
 
-使用 token 调用受保护接口时在 HTTP 头加入：
+**说明**:
+- access_token: 短期访问令牌，有效期15分钟
+- refresh_token: 长期刷新令牌，有效期7天
+- expires_in: access_token的有效期，单位秒
+- refresh_expires_in: refresh_token的有效期，单位秒
+
+
+
+##### 令牌刷新 - POST /api/auth/refresh
+
+使用刷新令牌获取新的访问令牌和刷新令牌。
+
+**请求示例:**
+```json
+{
+    "refresh_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+}
 ```
-Authorization: Bearer <JWT>
+
+**响应示例:**
+```json
+{
+    "success": true,
+    "message": "刷新成功",
+    "data": {
+        "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+        "expires_in": 900,
+        "refresh_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+        "refresh_expires_in": 604800
+    }
+}
+```
+
+**说明**:
+- 使用refresh_token而非access_token进行刷新
+- 刷新后会获得新的access_token和refresh_token
+- 旧的refresh_token会立即失效
+- 建议在access_token过期前进行刷新（例如过期前5分钟）
+
+
+
+
+
+##### 使用令牌调用受保护接口
+
+在HTTP头中加入Authorization：
+```
+Authorization: Bearer <access_token>
+```
+
+**示例 curl：**
+```bash
+# 登录获取 access_token 和 refresh_token
+RESPONSE=$(curl -s -X POST http://localhost:8080/api/auth -d '{"username":"admin","password":"admin123"}'     -H "Content-Type: application/json")
+
+# 提取令牌
+ACCESS_TOKEN=$(echo $RESPONSE | jq -r '.data.access_token')
+REFRESH_TOKEN=$(echo $RESPONSE | jq -r '.data.refresh_token')
+
+# 使用 access_token 调用受保护接口
+curl -s -X POST http://localhost:8080/api/analyze -d '{"media_type":"image","media_url":"https://..."}'     -H "Content-Type: application/json" -H "Authorization: Bearer $ACCESS_TOKEN"
+
+# 刷新令牌
+NEW_RESPONSE=$(curl -s -X POST http://localhost:8080/api/auth/refresh -d "{"refresh_token":"$REFRESH_TOKEN"}"     -H "Content-Type: application/json")
+
+# 提取新的 access_token
+NEW_ACCESS_TOKEN=$(echo $NEW_RESPONSE | jq -r '.data.access_token')
 ```
 
 示例 curl：
@@ -72,6 +155,11 @@ Authorization: Bearer <JWT>
 # 登录获取 token
 curl -s -X POST http://localhost:8080/api/auth -d '{"username":"admin","password":"password"}' \
     -H "Content-Type: application/json"
+
+
+# 刷新 access token
+
+
 
 # 使用 token 调用受保护接口
 TOKEN=eyJ... # 从登录响应获取
@@ -245,6 +333,24 @@ API服务器使用与命令行工具相同的数据库配置。请确保已正�
 5. 默认绑定到0.0.0.0，允许外部访问，生产环境建议使用防火墙限制访问
 6. 查询结果中包含完整分析内容，可能较大，建议客户端合理处理
 
+## 认证错误处理
+
+### 常见认证错误
+
+| 错误 | 原因 | 解决方案 |
+|------|------|----------|
+| 401 Unauthorized | 令牌缺失或无效 | 检查请求头中是否包含有效的Bearer令牌 |
+| 401 Token expired | 令牌已过期 | 使用refresh_token接口刷新令牌 |
+| 401 Invalid token | 令牌格式错误 | 重新登录获取新令牌 |
+| 403 Forbidden | 权限不足 | 联系管理员分配相应权限 |
+
+### 令牌刷新流程
+
+1. 客户端检测到令牌即将过期（建议在过期前1小时）
+2. 调用`/api/refresh_token`接口，传入当前令牌
+3. 获取新令牌并更新本地存储
+4. 使用新令牌继续请求API
+
 ## 故障排除
 
 - **连接失败**: 检查API密钥是否正确，网络是否通畅
@@ -252,6 +358,8 @@ API服务器使用与命令行工具相同的数据库配置。请确保已正�
 - **数据库错误**: 检查数据库配置是否正确，MySQL服务是否运行
 - **端口占用**: 使用--port参数指定其他端口
 - **查询无结果**: 检查查询条件是否正确，确认数据库中是否有匹配记录
+- **认证失败**: 检查用户名密码是否正确，令牌是否在有效期内
+- **JWT错误**: 检查JWT密钥配置是否正确，令牌格式是否有效
 
 ## 许可证
 

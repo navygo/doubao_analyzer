@@ -2,6 +2,7 @@
 #include "Jwt.hpp"
 #include "utils.hpp"
 #include "ConfigManager.hpp"
+#include "RefreshTokenStore.hpp"
 #include <cstdlib>
 #include <iostream>
 #include <fstream>
@@ -52,6 +53,14 @@ ApiServer::~ApiServer()
 
 bool ApiServer::initialize()
 {
+    // 支持在测试/本地环境跳过外部 API 和数据库初始化检查
+    const char *skip_env = std::getenv("SKIP_API_INIT");
+    if (skip_env && std::string(skip_env) == "1")
+    {
+        std::cout << "⚠️ SKIP_API_INIT=1，跳过外部 API 与数据库初始化检查" << std::endl;
+        return true;
+    }
+
     // 测试API连接
     if (!analyzer_->test_connection())
     {
@@ -112,6 +121,8 @@ void ApiServer::start()
     std::cout << "🚀 API服务器已启动，监听地址: " << host_ << ":" << port_ << std::endl;
     std::cout << "📋 可用的API路由:" << std::endl;
     std::cout << "   - POST /api/auth : 获取JWT令牌" << std::endl;
+    std::cout << "   - POST /api/auth/refresh : 刷新 access token，使用 refresh token 获取新的 access token" << std::endl;
+
     std::cout << "   - POST /api/analyze : 分析图片或视频" << std::endl;
     std::cout << "   - POST /api/query : 查询已分析的结果" << std::endl;
     std::cout << "   - GET /api/status : 获取服务器状态" << std::endl;
@@ -258,19 +269,27 @@ ApiResponse ApiServer::process_request(const std::string &request_json, const st
             nlohmann::json request_data = nlohmann::json::parse(request_json);
             std::string username = request_data.value("username", "");
             std::string password = request_data.value("password", "");
+            // 从配置获取管理员账号（优先使用 config/db_config.json 中的 auth）
+            ConfigManager cfg;
+            cfg.load_config();
+            auto auth = cfg.get_auth_config();
 
-            const char *env_user = std::getenv("ADMIN_USER");
-            const char *env_pass = std::getenv("ADMIN_PASS");
-            std::string admin_user = env_user ? env_user : "admin";
-            std::string admin_pass = env_pass ? env_pass : "password";
-
-            if (username == admin_user && password == admin_pass)
+            if (username == auth.admin_user && password == auth.admin_pass)
             {
-                std::string token = jwt::GenerateToken(username, 24 * 60 * 60); // 24 小时
+                // 颁发短期 access token 和长期 refresh token
+                int access_exp = 15 * 60;           // 15 分钟
+                int refresh_exp = 7 * 24 * 60 * 60; // 7 天
+                std::string access_token = jwt::GenerateToken(username, access_exp);
+
+                RefreshTokenStore store;
+                std::string refresh_token = store.CreateRefreshToken(username, refresh_exp);
+
                 response.success = true;
                 response.message = "登录成功";
-                response.data["token"] = token;
-                response.data["expires_in"] = 24 * 60 * 60;
+                response.data["access_token"] = access_token;
+                response.data["expires_in"] = access_exp;
+                response.data["refresh_token"] = refresh_token;
+                response.data["refresh_expires_in"] = refresh_exp;
             }
             else
             {
@@ -278,6 +297,47 @@ ApiResponse ApiServer::process_request(const std::string &request_json, const st
                 response.message = "用户名或密码错误";
                 response.error = "Unauthorized";
             }
+
+            return response;
+        }
+
+        // 刷新 access token，使用 refresh token 获取新的 access token
+        if (path == "/api/auth/refresh")
+        {
+            nlohmann::json request_data = nlohmann::json::parse(request_json);
+            std::string refresh_token = request_data.value("refresh_token", "");
+            if (refresh_token.empty())
+            {
+                response.success = false;
+                response.message = "缺少 refresh_token";
+                response.error = "Unauthorized";
+                return response;
+            }
+
+            RefreshTokenStore store;
+            std::string sub;
+            if (!store.VerifyRefreshToken(refresh_token, sub))
+            {
+                response.success = false;
+                response.message = "无效或已过期的 refresh_token";
+                response.error = "Unauthorized";
+                return response;
+            }
+
+            // 轮换 refresh token：撤销旧 token，签发新 token
+            store.RevokeToken(refresh_token);
+            int new_refresh_exp = 7 * 24 * 60 * 60;
+            std::string new_refresh_token = store.CreateRefreshToken(sub, new_refresh_exp);
+
+            int access_exp = 15 * 60; // 新的短期 access token
+            std::string access_token = jwt::GenerateToken(sub, access_exp);
+
+            response.success = true;
+            response.message = "刷新成功";
+            response.data["access_token"] = access_token;
+            response.data["expires_in"] = access_exp;
+            response.data["refresh_token"] = new_refresh_token;
+            response.data["refresh_expires_in"] = new_refresh_exp;
 
             return response;
         }

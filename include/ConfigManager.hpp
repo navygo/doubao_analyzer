@@ -38,6 +38,15 @@ struct CleanupConfig
     CleanupConfig() : auto_cleanup(true), retention_days(90) {}
 };
 
+// 认证配置
+struct AuthConfig
+{
+    std::string admin_user;
+    std::string admin_pass;
+
+    AuthConfig() : admin_user("admin"), admin_pass("password") {}
+};
+
 class ConfigManager
 {
 private:
@@ -45,6 +54,7 @@ private:
     DatabaseConfig db_config_;
     BackupConfig backup_config_;
     CleanupConfig cleanup_config_;
+    AuthConfig auth_config_;
 
     // 解析JSON配置
     void parse_config(const nlohmann::json &config);
@@ -74,6 +84,9 @@ public:
     // 获取清理配置
     const CleanupConfig &get_cleanup_config() const;
 
+    // 获取认证配置
+    const AuthConfig &get_auth_config() const;
+
     // 设置数据库配置
     void set_database_config(const DatabaseConfig &config);
 
@@ -82,4 +95,5 @@ public:
 
     // 设置清理配置
     void set_cleanup_config(const CleanupConfig &config);
+    void set_auth_config(const AuthConfig &config);
 };

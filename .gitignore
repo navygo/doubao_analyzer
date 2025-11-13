@@ -60,3 +60,7 @@ test/*
 .vscode/*
 .vscode/launch.json
 config/db_config.json
+logs/api_server_skipinit_root.log
+logs/api_server_skipinit.log
+logs/api_server.log
+config/refresh_tokens.json

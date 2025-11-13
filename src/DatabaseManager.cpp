@@ -128,7 +128,25 @@ bool DatabaseManager::initialize_tables()
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
     )";
 
-    return execute_query(create_table_query);
+    if (!execute_query(create_table_query))
+        return false;
+
+    // 创建 refresh_tokens 表
+    std::string create_refresh_table = R"(
+        CREATE TABLE IF NOT EXISTS refresh_tokens (
+            token_hash CHAR(64) PRIMARY KEY,
+            user_id VARCHAR(128) NOT NULL,
+            created_at BIGINT NOT NULL,
+            expires_at BIGINT NOT NULL,
+            last_used BIGINT DEFAULT NULL,
+            INDEX idx_expires_at (expires_at)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    )";
+
+    if (!execute_query(create_refresh_table))
+        return false;
+
+    return true;
 }
 
 std::string DatabaseManager::get_current_timestamp()
@@ -144,6 +162,50 @@ std::string DatabaseManager::get_current_timestamp()
     ss << '.' << std::setfill('0') << std::setw(3) << ms.count();
 
     return ss.str();
+}
+
+bool DatabaseManager::create_refresh_token_record(const std::string &token_hash, const std::string &user_id, long created_at, long expires_at)
+{
+    std::stringstream q;
+    q << "INSERT INTO refresh_tokens (token_hash, user_id, created_at, expires_at) VALUES ('";
+    q << utils::replace_all(token_hash, "'", "''") << "', '";
+    q << utils::replace_all(user_id, "'", "''") << "', ";
+    q << created_at << ", " << expires_at << ")";
+    return execute_query(q.str());
+}
+
+bool DatabaseManager::verify_refresh_token_record(const std::string &token_hash, std::string &out_user_id)
+{
+    if (connection_ == nullptr)
+        return false;
+    std::string q = "SELECT user_id, expires_at FROM refresh_tokens WHERE token_hash = '" + utils::replace_all(token_hash, "'", "''") + "' LIMIT 1";
+    if (!execute_query(q))
+        return false;
+
+    MYSQL_RES *result = mysql_store_result(connection_);
+    if (result == nullptr)
+        return false;
+    MYSQL_ROW row = mysql_fetch_row(result);
+    bool ok = false;
+    if (row != nullptr)
+    {
+        std::string user = row[0] ? row[0] : "";
+        long expires_at = row[1] ? atol(row[1]) : 0;
+        long now = (long)std::time(nullptr);
+        if (now <= expires_at)
+        {
+            out_user_id = user;
+            ok = true;
+        }
+    }
+    mysql_free_result(result);
+    return ok;
+}
+
+bool DatabaseManager::revoke_refresh_token_record(const std::string &token_hash)
+{
+    std::string q = "DELETE FROM refresh_tokens WHERE token_hash = '" + utils::replace_all(token_hash, "'", "''") + "'";
+    return execute_query(q);
 }
 
 bool DatabaseManager::save_analysis_result(const MediaAnalysisRecord &record)

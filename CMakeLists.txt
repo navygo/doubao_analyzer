@@ -49,6 +49,7 @@ set(SOURCES
     src/TaskManager.cpp
     src/GPUManager.cpp
     src/Jwt.cpp
+    src/RefreshTokenStore.cpp
 )
 
 # API服务器源文件
@@ -66,6 +67,7 @@ set(API_SOURCES
     src/TaskManager.cpp
     src/GPUManager.cpp
     src/Jwt.cpp
+    src/RefreshTokenStore.cpp
 )
 
 # 创建可执行文件
