@@ -1,6 +1,8 @@
 #include "ApiServer.hpp"
+#include "Jwt.hpp"
 #include "utils.hpp"
 #include "ConfigManager.hpp"
+#include <cstdlib>
 #include <iostream>
 #include <fstream>
 #include <sstream>
@@ -38,7 +40,7 @@ ApiServer::ApiServer(const std::string &api_key, int port, const std::string &ho
 {
     // 初始化分析器
     analyzer_ = std::make_unique<DoubaoMediaAnalyzer>(api_key);
-    
+
     // 初始化任务管理器（使用4个工作线程）
     TaskManager::getInstance().initialize(4);
 }
@@ -109,6 +111,7 @@ void ApiServer::start()
 
     std::cout << "🚀 API服务器已启动，监听地址: " << host_ << ":" << port_ << std::endl;
     std::cout << "📋 可用的API路由:" << std::endl;
+    std::cout << "   - POST /api/auth : 获取JWT令牌" << std::endl;
     std::cout << "   - POST /api/analyze : 分析图片或视频" << std::endl;
     std::cout << "   - POST /api/query : 查询已分析的结果" << std::endl;
     std::cout << "   - GET /api/status : 获取服务器状态" << std::endl;
@@ -177,8 +180,34 @@ void ApiServer::start()
             }
         }
 
+        // 解析请求头并提取 Authorization（如果有）
+        std::string auth_header;
+        size_t headers_end = request.find("\r\n\r\n");
+        if (headers_end != std::string::npos)
+        {
+            std::string headers = request.substr(0, headers_end);
+            size_t auth_pos = headers.find("Authorization:");
+            if (auth_pos != std::string::npos)
+            {
+                size_t line_end = headers.find("\r\n", auth_pos);
+                if (line_end == std::string::npos)
+                    line_end = headers.length();
+                std::string line = headers.substr(auth_pos, line_end - auth_pos);
+                size_t colon = line.find(":");
+                if (colon != std::string::npos)
+                {
+                    auth_header = line.substr(colon + 1);
+                    // trim
+                    while (!auth_header.empty() && (auth_header.front() == ' ' || auth_header.front() == '\t'))
+                        auth_header.erase(0, 1);
+                    while (!auth_header.empty() && (auth_header.back() == '\r' || auth_header.back() == '\n' || auth_header.back() == ' '))
+                        auth_header.pop_back();
+                }
+            }
+        }
+
         // 解析请求并处理
-        ApiResponse response = process_request(request_body, request_path);
+        ApiResponse response = process_request(request_body, request_path, auth_header);
 
         // 构建完整响应JSON
         nlohmann::json response_json_obj;
@@ -193,14 +222,18 @@ void ApiServer::start()
 
         // 发送响应
         std::string response_json = response_json_obj.dump();
-        
-        // 构建HTTP响应
-        std::string http_response = "HTTP/1.1 200 OK\r\n";
+
+        // 构建HTTP响应（若未经授权则返回401）
+        std::string http_response;
+        if (response.error == "Unauthorized")
+            http_response = "HTTP/1.1 401 Unauthorized\r\n";
+        else
+            http_response = "HTTP/1.1 200 OK\r\n";
         http_response += "Content-Type: application/json\r\n";
         http_response += "Content-Length: " + std::to_string(response_json.length()) + "\r\n";
         http_response += "\r\n";
         http_response += response_json;
-        
+
         send(new_socket, http_response.c_str(), http_response.length(), 0);
         std::cout << "📤 发送响应: " << response_json << std::endl;
 
@@ -213,12 +246,69 @@ void ApiServer::stop()
     std::cout << "🛑 API服务器已停止" << std::endl;
 }
 
-ApiResponse ApiServer::process_request(const std::string &request_json, const std::string &path)
+ApiResponse ApiServer::process_request(const std::string &request_json, const std::string &path, const std::string &auth_header)
 {
     ApiResponse response;
 
     try
     {
+        // 登录接口（公开）
+        if (path == "/api/auth")
+        {
+            nlohmann::json request_data = nlohmann::json::parse(request_json);
+            std::string username = request_data.value("username", "");
+            std::string password = request_data.value("password", "");
+
+            const char *env_user = std::getenv("ADMIN_USER");
+            const char *env_pass = std::getenv("ADMIN_PASS");
+            std::string admin_user = env_user ? env_user : "admin";
+            std::string admin_pass = env_pass ? env_pass : "password";
+
+            if (username == admin_user && password == admin_pass)
+            {
+                std::string token = jwt::GenerateToken(username, 24 * 60 * 60); // 24 小时
+                response.success = true;
+                response.message = "登录成功";
+                response.data["token"] = token;
+                response.data["expires_in"] = 24 * 60 * 60;
+            }
+            else
+            {
+                response.success = false;
+                response.message = "用户名或密码错误";
+                response.error = "Unauthorized";
+            }
+
+            return response;
+        }
+
+        // 对需要认证的接口进行 token 验证（/api/analyze /api/query /api/batch_analyze）
+        if (path == "/api/query" || path == "/api/analyze" || path == "/api/batch_analyze")
+        {
+            if (auth_header.empty())
+            {
+                response.success = false;
+                response.message = "未提供 Authorization 头";
+                response.error = "Unauthorized";
+                return response;
+            }
+
+            std::string token = auth_header;
+            // 支持直接传入 "Bearer <token>" 或者仅传 token
+            if (token.rfind("Bearer ", 0) == 0)
+            {
+                token = token.substr(7);
+            }
+
+            nlohmann::json claims;
+            if (!jwt::VerifyToken(token, claims))
+            {
+                response.success = false;
+                response.message = "无效或已过期的 token";
+                response.error = "Unauthorized";
+                return response;
+            }
+        }
         // 处理状态查询请求
         if (path == "/api/status")
         {
@@ -305,7 +395,7 @@ ApiResponse ApiServer::process_request(const std::string &request_json, const st
         {
             // 解析JSON请求
             nlohmann::json request_data = nlohmann::json::parse(request_json);
-            
+
             // 检查必要字段
             if (!request_data.contains("requests") || !request_data["requests"].is_array())
             {
@@ -314,11 +404,11 @@ ApiResponse ApiServer::process_request(const std::string &request_json, const st
                 response.error = "Invalid request format";
                 return response;
             }
-            
+
             std::vector<ApiRequest> requests;
-            const auto& requests_array = request_data["requests"];
-            
-            for (const auto& req_json : requests_array)
+            const auto &requests_array = request_data["requests"];
+
+            for (const auto &req_json : requests_array)
             {
                 if (!req_json.contains("media_type") || !req_json.contains("media_url"))
                 {
@@ -327,7 +417,7 @@ ApiResponse ApiServer::process_request(const std::string &request_json, const st
                     response.error = "Invalid request format";
                     return response;
                 }
-                
+
                 ApiRequest req;
                 req.media_type = req_json["media_type"].get<std::string>();
                 req.media_url = req_json["media_url"].get<std::string>();
@@ -335,7 +425,7 @@ ApiResponse ApiServer::process_request(const std::string &request_json, const st
                 req.max_tokens = req_json.value("max_tokens", 1500);
                 req.video_frames = req_json.value("video_frames", 5);
                 req.save_to_db = req_json.value("save_to_db", true);
-                
+
                 // 验证媒体类型
                 if (req.media_type != "image" && req.media_type != "video")
                 {
@@ -344,10 +434,10 @@ ApiResponse ApiServer::process_request(const std::string &request_json, const st
                     response.error = "Invalid media type";
                     return response;
                 }
-                
+
                 requests.push_back(req);
             }
-            
+
             // 处理批量分析请求
             double start_time = utils::get_current_time();
             response = handle_batch_analysis(requests);
@@ -683,7 +773,7 @@ ApiResponse ApiServer::handle_query_request(const ApiQueryRequest &request)
     return response;
 }
 // 处理批量分析请求
-ApiResponse ApiServer::handle_batch_analysis(const std::vector<ApiRequest>& requests)
+ApiResponse ApiServer::handle_batch_analysis(const std::vector<ApiRequest> &requests)
 {
     ApiResponse response;
     nlohmann::json timing_info = nlohmann::json::object();
@@ -692,13 +782,15 @@ ApiResponse ApiServer::handle_batch_analysis(const std::vector<ApiRequest>& requ
     std::cout << "🔄 [批量分析] 开始处理 " << requests.size() << " 个媒体文件" << std::endl;
     std::cout << "⏰ [时间戳] 请求接收时间: " << utils::get_formatted_timestamp() << std::endl;
 
-    try {
+    try
+    {
         // 创建任务列表
         std::vector<AnalysisTask> tasks;
         tasks.reserve(requests.size());
 
-        for (size_t i = 0; i < requests.size(); ++i) {
-            const auto& req = requests[i];
+        for (size_t i = 0; i < requests.size(); ++i)
+        {
+            const auto &req = requests[i];
 
             AnalysisTask task;
             task.id = "batch_" + std::to_string(i) + "_" + utils::get_current_timestamp();
@@ -719,7 +811,8 @@ ApiResponse ApiServer::handle_batch_analysis(const std::vector<ApiRequest>& requ
         std::vector<TaskResult> results;
         results.reserve(futures.size());
 
-        for (auto& future : futures) {
+        for (auto &future : futures)
+        {
             results.push_back(future.get());
         }
 
@@ -727,18 +820,22 @@ ApiResponse ApiServer::handle_batch_analysis(const std::vector<ApiRequest>& requ
         nlohmann::json results_array = nlohmann::json::array();
         int success_count = 0;
 
-        for (const auto& result : results) {
+        for (const auto &result : results)
+        {
             nlohmann::json result_obj;
             result_obj["task_id"] = result.task_id;
             result_obj["success"] = result.success;
 
-            if (result.success) {
+            if (result.success)
+            {
                 result_obj["content"] = result.result.content;
                 result_obj["tags"] = utils::extract_tags(result.result.content);
                 result_obj["response_time"] = result.result.response_time;
                 result_obj["usage"] = result.result.usage;
                 success_count++;
-            } else {
+            }
+            else
+            {
                 result_obj["error"] = result.error;
             }
 
@@ -752,8 +849,7 @@ ApiResponse ApiServer::handle_batch_analysis(const std::vector<ApiRequest>& requ
         response.data["summary"] = {
             {"total", requests.size()},
             {"successful", success_count},
-            {"failed", requests.size() - success_count}
-        };
+            {"failed", requests.size() - success_count}};
 
         double total_time = utils::get_current_time() - total_start_time;
         timing_info["total_seconds"] = total_time;
@@ -764,7 +860,8 @@ ApiResponse ApiServer::handle_batch_analysis(const std::vector<ApiRequest>& requ
         std::cout << "⏰ [时间戳] 请求处理完成时间: " << utils::get_formatted_timestamp() << std::endl;
         std::cout << "🎉 [完成] 批量分析请求处理完成，总耗时: " << total_time << " 秒" << std::endl;
     }
-    catch (const std::exception& e) {
+    catch (const std::exception &e)
+    {
         response.success = false;
         response.message = "批量分析失败: " + std::string(e.what());
         response.error = "Batch analysis error";

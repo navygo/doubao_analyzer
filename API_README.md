@@ -41,6 +41,45 @@ doubao_api_server --help
 
 ### API接口
 
+#### 认证（Bearer JWT）
+
+本服务使用基于 `Bearer JWT` 的简单认证方案。默认有两个环境变量用于登录验证（仅示例）:
+
+- `ADMIN_USER`（默认: `admin`）
+- `ADMIN_PASS`（默认: `password`）
+
+获取 token：
+
+请求: `POST /api/auth`
+
+请求示例:
+```json
+{ "username": "admin", "password": "password" }
+```
+
+响应示例:
+```json
+{ "success": true, "data": { "token": "<JWT>", "expires_in": 900 } }
+```
+
+使用 token 调用受保护接口时在 HTTP 头加入：
+```
+Authorization: Bearer <JWT>
+```
+
+示例 curl：
+```bash
+# 登录获取 token
+curl -s -X POST http://localhost:8080/api/auth -d '{"username":"admin","password":"password"}' \
+    -H "Content-Type: application/json"
+
+# 使用 token 调用受保护接口
+TOKEN=eyJ... # 从登录响应获取
+curl -s -X POST http://localhost:8080/api/analyze -d '{"media_type":"image","media_url":"https://..."}' \
+    -H "Content-Type: application/json" -H "Authorization: Bearer $TOKEN"
+```
+
+
 #### 分析接口 - POST /api/analyze
 
 分析图片或视频内容。

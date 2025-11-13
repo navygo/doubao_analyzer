@@ -11,6 +11,7 @@ set(CMAKE_BUILD_TYPE "Debug")
 find_package(OpenCV REQUIRED)
 find_package(CUDA REQUIRED)  # 添加CUDA支持
 find_package(CURL REQUIRED)
+find_package(OpenSSL REQUIRED)
 find_package(PkgConfig REQUIRED)
 
 # 在第11行附近，将原来的 find_package(MySQL REQUIRED) 替换为：
@@ -47,6 +48,7 @@ set(SOURCES
     src/VideoKeyframeAnalyzer.cpp
     src/TaskManager.cpp
     src/GPUManager.cpp
+    src/Jwt.cpp
 )
 
 # API服务器源文件
@@ -63,6 +65,7 @@ set(API_SOURCES
     src/VideoKeyframeAnalyzer.cpp
     src/TaskManager.cpp
     src/GPUManager.cpp
+    src/Jwt.cpp
 )
 
 # 创建可执行文件
@@ -75,6 +78,7 @@ target_link_libraries(doubao_analyzer
     ${CUDA_LIBRARIES}
     CURL::libcurl
     ${MYSQL_LIBRARIES}
+    ${OPENSSL_LIBRARIES}
 )
 
 # API服务器链接库
@@ -83,6 +87,7 @@ target_link_libraries(doubao_api_server
     ${CUDA_LIBRARIES}
     CURL::libcurl
     ${MYSQL_LIBRARIES}
+    ${OPENSSL_LIBRARIES}
 )
 
 # 设置C++标准
