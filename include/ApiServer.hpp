@@ -68,6 +68,8 @@ private:
 
     // 将结果保存到数据库
     bool save_to_database(const AnalysisResult &result, const std::string &media_url, const std::string &media_type);
+    // 将批量结果保存到数据库
+    bool save_batch_to_database(const std::vector<AnalysisResult> &results);
 
 public:
     ApiServer(const std::string &api_key, int port = 8080, const std::string &host = "0.0.0.0");

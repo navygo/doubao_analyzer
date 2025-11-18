@@ -5,17 +5,21 @@
 #include <chrono>
 
 // 单例实现
-TaskManager& TaskManager::getInstance() {
+TaskManager &TaskManager::getInstance()
+{
     static TaskManager instance;
     return instance;
 }
 
-TaskManager::~TaskManager() {
+TaskManager::~TaskManager()
+{
     shutdown();
 }
 
-void TaskManager::initialize(size_t thread_count, const std::string& api_key) {
-    if (!workers_.empty()) {
+void TaskManager::initialize(size_t thread_count, const std::string &api_key)
+{
+    if (!workers_.empty())
+    {
         return; // 已经初始化
     }
 
@@ -26,25 +30,31 @@ void TaskManager::initialize(size_t thread_count, const std::string& api_key) {
     analyzer_ = std::make_shared<DoubaoMediaAnalyzer>(api_key);
 
     // 创建工作线程
-    for (size_t i = 0; i < thread_count; ++i) {
+    for (size_t i = 0; i < thread_count; ++i)
+    {
         workers_.emplace_back(&TaskManager::workerThread, this);
     }
 
     std::cout << "✅ 任务管理器已初始化，线程数: " << thread_count << std::endl;
 }
 
-std::future<TaskResult> TaskManager::addTask(const AnalysisTask& task) {
+std::future<TaskResult> TaskManager::addTask(const AnalysisTask &task)
+{
     auto promise = std::make_shared<std::promise<TaskResult>>();
     auto future = promise->get_future();
 
     // 创建带回调的任务副本
     AnalysisTask task_with_callback = task;
-    task_with_callback.callback = [promise, task](const AnalysisResult& result) {
+    task_with_callback.callback = [promise, task](const AnalysisResult &result)
+    {
         TaskResult task_result;
         task_result.task_id = task.id;
         task_result.success = result.success;
         task_result.result = result;
         task_result.error = result.error;
+        // 多线程处理 将请求的媒体URL和类型放入结果中
+        task_result.result.raw_response["path"] = task.media_url;
+        task_result.result.raw_response["type"] = task.media_type;
 
         promise->set_value(task_result);
     };
@@ -58,19 +68,23 @@ std::future<TaskResult> TaskManager::addTask(const AnalysisTask& task) {
     return future;
 }
 
-std::vector<std::future<TaskResult>> TaskManager::addTasks(const std::vector<AnalysisTask>& tasks) {
+std::vector<std::future<TaskResult>> TaskManager::addTasks(const std::vector<AnalysisTask> &tasks)
+{
     std::vector<std::future<TaskResult>> futures;
     futures.reserve(tasks.size());
 
-    for (const auto& task : tasks) {
+    for (const auto &task : tasks)
+    {
         futures.push_back(addTask(task));
     }
 
     return futures;
 }
 
-void TaskManager::shutdown() {
-    if (stop_) {
+void TaskManager::shutdown()
+{
+    if (stop_)
+    {
         return; // 已经关闭
     }
 
@@ -82,8 +96,10 @@ void TaskManager::shutdown() {
     condition_.notify_all();
 
     // 等待所有线程完成
-    for (auto& worker : workers_) {
-        if (worker.joinable()) {
+    for (auto &worker : workers_)
+    {
+        if (worker.joinable())
+        {
             worker.join();
         }
     }
@@ -92,27 +108,31 @@ void TaskManager::shutdown() {
     std::cout << "✅ 任务管理器已关闭" << std::endl;
 }
 
-size_t TaskManager::getPendingTaskCount() const {
-    std::unique_lock<std::mutex> lock(const_cast<std::mutex&>(queue_mutex_));
+size_t TaskManager::getPendingTaskCount() const
+{
+    std::unique_lock<std::mutex> lock(const_cast<std::mutex &>(queue_mutex_));
     return tasks_.size();
 }
 
-size_t TaskManager::getActiveThreadCount() const {
+size_t TaskManager::getActiveThreadCount() const
+{
     return active_threads_;
 }
 
-void TaskManager::workerThread() {
-    while (true) {
+void TaskManager::workerThread()
+{
+    while (true)
+    {
         AnalysisTask task;
 
         {
             std::unique_lock<std::mutex> lock(queue_mutex_);
 
-            condition_.wait(lock, [this] {
-                return stop_ || !tasks_.empty();
-            });
+            condition_.wait(lock, [this]
+                            { return stop_ || !tasks_.empty(); });
 
-            if (stop_ && tasks_.empty()) {
+            if (stop_ && tasks_.empty())
+            {
                 return;
             }
 
@@ -126,59 +146,96 @@ void TaskManager::workerThread() {
         active_threads_--;
 
         // 调用回调
-        if (task.callback) {
+        if (task.callback)
+        {
             task.callback(result.result);
         }
     }
 }
 
-TaskResult TaskManager::executeTask(const AnalysisTask& task) {
+TaskResult TaskManager::executeTask(const AnalysisTask &task)
+{
     TaskResult result;
     result.task_id = task.id;
 
-    try {
+    try
+    {
         std::cout << "🔄 开始处理任务: " << task.id << " (" << task.media_type << ")" << std::endl;
 
         // 根据媒体类型选择分析方法
-        if (task.media_type == "image") {
+        if (task.media_type == "image")
+        {
+            // 下载图片到临时文件
+            std::string temp_file = "/tmp/batch_image_" + task.id + ".jpg";
+            if (!utils::download_file(task.media_url, temp_file))
+            {
+                result.result.success = false;
+                result.result.error = "图片文件不存在: " + task.media_url;
+                result.success = false;
+                result.error = result.result.error;
+                return result;
+            }
+
+            // 分析下载的图片
             result.result = analyzer_->analyze_single_image(
-                task.media_url, 
-                task.prompt, 
+                temp_file,
+                task.prompt,
                 task.max_tokens);
-        } 
-        else if (task.media_type == "video") {
+
+            // 清理临时文件
+            std::filesystem::remove(temp_file);
+
+            // 如果分析成功，更新结果中的路径为原始URL
+            if (result.result.success)
+            {
+                result.result.raw_response["path"] = task.media_url;
+            }
+        }
+        else if (task.media_type == "video")
+        {
             result.result = analyzer_->analyze_video_efficiently(
-                task.media_url, 
-                task.prompt, 
+                task.media_url,
+                task.prompt,
                 task.max_tokens,
                 "keyframes"); // 使用关键帧提取方法
+
+            // 如果分析成功，更新结果中的路径为原始URL
+            if (result.result.success)
+            {
+                result.result.raw_response["path"] = task.media_url;
+            }
         }
-        else {
+        else
+        {
             result.result.success = false;
             result.result.error = "不支持的媒体类型: " + task.media_type;
         }
 
         // 异步保存到数据库
-        if (task.save_to_db && result.result.success) {
+        if (task.save_to_db && result.result.success)
+        {
             // 使用线程池中的线程异步保存，避免阻塞
-            std::thread([this, result]() {
+            std::thread([this, result]()
+                        {
                 try {
                     analyzer_->save_result_to_database(result.result);
                     std::cout << "✅ 任务结果已保存到数据库: " << result.task_id << std::endl;
                 } catch (const std::exception& e) {
                     std::cerr << "❌ 保存到数据库失败: " << e.what() << std::endl;
-                }
-            }).detach();
+                } })
+                .detach();
         }
 
         result.success = result.result.success;
-        if (!result.success) {
+        if (!result.success)
+        {
             result.error = result.result.error;
         }
 
         std::cout << "✅ 任务完成: " << task.id << " (成功: " << (result.success ? "是" : "否") << ")" << std::endl;
     }
-    catch (const std::exception& e) {
+    catch (const std::exception &e)
+    {
         result.success = false;
         result.error = "任务执行异常: " + std::string(e.what());
         std::cerr << "❌ 任务执行异常: " << result.error << std::endl;

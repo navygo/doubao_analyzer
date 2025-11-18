@@ -45,9 +45,7 @@ std::string get_image_prompt()
  一级标签：选择最概括的主类别。
  二级标签：在一级标签下选择更具体的子类别。
  三级标签：在二级标签下选择最精准的描述性标签
- 四级标签：在三级标签下选择最精准的描述性标签
- 五级标签：在四级标签下选择最精准的描述性标签
-4. 输出格式：通过分析，生成的标签为：['一级标签', '二级标签', '三级标签', '四级标签', '五级标签'])";
+4. 输出格式：通过分析，生成的标签为：['一级标签', '二级标签', '三级标签'])";
 }
 
 std::string get_video_prompt()
@@ -59,9 +57,7 @@ std::string get_video_prompt()
  一级标签：选择最概括的主类别。
  二级标签：在一级标签下选择更具体的子类别。
  三级标签：在二级标签下选择最精准的描述性标签
- 四级标签：在三级标签下选择最精准的描述性标签
- 五级标签：在四级标签下选择最精准的描述性标签
-4. 输出格式：通过分析视频，生成的标签为：['一级标签', '二级标签', '三级标签', '四级标签', '五级标签'])";
+4. 输出格式：通过分析视频，生成的标签为：['一级标签', '二级标签', '三级标签'])";
 }
 
 ApiServer::ApiServer(const std::string &api_key, int port, const std::string &host)
@@ -70,8 +66,8 @@ ApiServer::ApiServer(const std::string &api_key, int port, const std::string &ho
     // 初始化分析器
     analyzer_ = std::make_unique<DoubaoMediaAnalyzer>(api_key);
 
-    // 初始化任务管理器（使用4个工作线程）
-    TaskManager::getInstance().initialize(4);
+    // 初始化任务管理器（使用4个工作线程）调用大模型需要传递 api_key
+    TaskManager::getInstance().initialize(4, api_key);
 }
 
 ApiServer::~ApiServer()
@@ -152,6 +148,7 @@ void ApiServer::start()
     std::cout << "   - POST /api/auth/refresh : 刷新 access token，使用 refresh token 获取新的 access token" << std::endl;
 
     std::cout << "   - POST /api/analyze : 分析图片或视频" << std::endl;
+    std::cout << "   - POST /api/batch_analyze : 批量分析图片或视频" << std::endl;
     std::cout << "   - POST /api/query : 查询已分析的结果" << std::endl;
     std::cout << "   - GET /api/status : 获取服务器状态" << std::endl;
 
@@ -305,7 +302,7 @@ ApiResponse ApiServer::process_request(const std::string &request_json, const st
             if (username == auth.admin_user && password == auth.admin_pass)
             {
                 // 颁发短期 access token 和长期 refresh token
-                int access_exp = 15 * 60;           // 15 分钟
+                int access_exp = 60 * 60;           // 60 分钟
                 int refresh_exp = 7 * 24 * 60 * 60; // 7 天
                 std::string access_token = jwt::GenerateToken(username, access_exp);
 
@@ -899,10 +896,25 @@ ApiResponse ApiServer::handle_batch_analysis(const std::vector<ApiRequest> &requ
         std::vector<TaskResult> results;
         results.reserve(futures.size());
 
+        // 创建用于存储分析结果的向量
+        std::vector<AnalysisResult> results_db;
+        results_db.reserve(futures.size());
+
         for (auto &future : futures)
         {
-            results.push_back(future.get());
+            TaskResult taskResult = future.get();
+            results.push_back(taskResult);
+
+            // 将分析结果添加到results_db
+            if (taskResult.success)
+            {
+                results_db.push_back(taskResult.result);
+            }
         }
+
+        // 批量请求返回结果保存到数据库
+
+        save_batch_to_database(results_db);
 
         // 构建响应数据
         nlohmann::json results_array = nlohmann::json::array();
@@ -961,4 +973,18 @@ ApiResponse ApiServer::handle_batch_analysis(const std::vector<ApiRequest> &requ
     response.response_time = utils::get_current_time() - total_start_time;
 
     return response;
+}
+// 批量保存分析结果到数据库
+bool ApiServer::save_batch_to_database(const std::vector<AnalysisResult> &results)
+{
+    try
+    {
+        // 保存到数据库
+        return analyzer_->save_batch_results_to_database(results);
+    }
+    catch (const std::exception &e)
+    {
+        std::cerr << "❌ 保存到数据库失败: " << e.what() << std::endl;
+        return false;
+    }
 }
