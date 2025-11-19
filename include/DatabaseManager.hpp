@@ -18,6 +18,7 @@ struct MediaAnalysisRecord
     std::string tags;
     double response_time;
     std::string created_at;
+    std::string file_id; // Excel文件中的唯一标识符
 
     MediaAnalysisRecord() : id(0), response_time(0.0) {}
 };

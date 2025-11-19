@@ -39,6 +39,7 @@ bool DoubaoMediaAnalyzer::save_result_to_database(const AnalysisResult &result)
     record.file_type = result.raw_response.contains("type") ? result.raw_response["type"] : "unknown";
     record.analysis_result = result.content;
     record.response_time = result.response_time;
+    record.file_id = result.raw_response.contains("file_id") ? result.raw_response["file_id"] : "";
 
     // 提取标签
     auto tags = extract_tags(result.content);
@@ -85,6 +86,7 @@ bool DoubaoMediaAnalyzer::save_batch_results_to_database(const std::vector<Analy
         record.file_type = results[i].raw_response.contains("type") ? results[i].raw_response["type"] : "unknown";
         record.analysis_result = results[i].content;
         record.response_time = results[i].response_time;
+        record.file_id = results[i].raw_response.contains("file_id") ? results[i].raw_response["file_id"] : "";
 
         // 提取标签
         auto tags = extract_tags(results[i].content);

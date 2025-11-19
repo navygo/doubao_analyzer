@@ -6,6 +6,7 @@
 #include <nlohmann/json.hpp>
 #include "DoubaoMediaAnalyzer.hpp"
 #include "TaskManager.hpp"
+#include "ExcelProcessor.hpp"
 
 // API请求结构
 struct ApiRequest
@@ -29,6 +30,16 @@ struct ApiQueryRequest
     int limit;              // 返回结果数量限制（当query_type为"recent"时使用）
     std::string condition;  // 自定义查询条件
     std::string media_url;  // 要查询的媒体URL（当query_type为"url"时使用）
+};
+
+// Excel处理请求结构
+struct ApiExcelRequest
+{
+    std::string excel_path;  // Excel文件路径
+    std::string output_path; // 输出Excel文件路径
+    std::string prompt;      // 分析提示词
+    int max_tokens;          // 最大令牌数
+    bool save_to_db;         // 是否保存到数据库
 };
 
 // API响应结构
@@ -65,6 +76,12 @@ private:
 
     // 处理批量分析请求
     ApiResponse handle_batch_analysis(const std::vector<ApiRequest> &requests);
+
+    // 处理Excel文件分析请求
+    ApiResponse handle_excel_analysis(const ApiExcelRequest &request);
+
+    // 处理数据库媒体分析请求
+    ApiResponse handle_db_media_analysis(const std::string &prompt, int max_tokens = 1500, bool save_to_db = true);
 
     // 将结果保存到数据库
     bool save_to_database(const AnalysisResult &result, const std::string &media_url, const std::string &media_type);

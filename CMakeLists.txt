@@ -50,6 +50,7 @@ set(SOURCES
     src/GPUManager.cpp
     src/Jwt.cpp
     src/RefreshTokenStore.cpp
+    src/ExcelProcessor.cpp
 )
 
 # API服务器源文件
@@ -68,6 +69,7 @@ set(API_SOURCES
     src/GPUManager.cpp
     src/Jwt.cpp
     src/RefreshTokenStore.cpp
+    src/ExcelProcessor.cpp
 )
 
 # 创建可执行文件

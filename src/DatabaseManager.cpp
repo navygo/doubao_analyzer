@@ -122,9 +122,11 @@ bool DatabaseManager::initialize_tables()
             tags VARCHAR(1024),
             response_time DOUBLE,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            file_id VARCHAR(255),
             INDEX idx_file_type (file_type),
             INDEX idx_created_at (created_at),
-            INDEX idx_tags (tags(255))
+            INDEX idx_tags (tags(255)),
+            INDEX idx_file_id (file_id)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
     )";
 
@@ -211,13 +213,14 @@ bool DatabaseManager::revoke_refresh_token_record(const std::string &token_hash)
 bool DatabaseManager::save_analysis_result(const MediaAnalysisRecord &record)
 {
     std::stringstream query;
-    query << "INSERT INTO media_analysis (file_path, file_name, file_type, analysis_result, tags, response_time) VALUES (";
+    query << "INSERT INTO media_analysis (file_path, file_name, file_type, analysis_result, tags, response_time, file_id) VALUES (";
     query << "'" << utils::replace_all(record.file_path, "'", "''") << "', ";
     query << "'" << utils::replace_all(record.file_name, "'", "''") << "', ";
     query << "'" << record.file_type << "', ";
     query << "'" << utils::replace_all(record.analysis_result, "'", "''") << "', ";
     query << "'" << utils::replace_all(record.tags, "'", "''") << "', ";
-    query << std::fixed << std::setprecision(6) << record.response_time;
+    query << std::fixed << std::setprecision(6) << record.response_time << ", ";
+    query << "'" << utils::replace_all(record.file_id, "'", "''") << "'";
     query << ")";
 
     return execute_query(query.str());
@@ -262,7 +265,7 @@ std::vector<MediaAnalysisRecord> DatabaseManager::query_results(const std::strin
 {
     std::vector<MediaAnalysisRecord> results;
 
-    std::string query = "SELECT id, file_path, file_name, file_type, analysis_result, tags, response_time, created_at FROM media_analysis";
+    std::string query = "SELECT id, file_path, file_name, file_type, analysis_result, tags, response_time, created_at, file_id FROM media_analysis";
     if (!condition.empty())
     {
         query += " WHERE " + condition;
@@ -292,6 +295,7 @@ std::vector<MediaAnalysisRecord> DatabaseManager::query_results(const std::strin
         record.tags = row[5] ? row[5] : "";
         record.response_time = row[6] ? atof(row[6]) : 0.0;
         record.created_at = row[7] ? row[7] : "";
+        record.file_id = row[8] ? row[8] : "";
 
         results.push_back(record);
     }
@@ -315,7 +319,7 @@ std::vector<MediaAnalysisRecord> DatabaseManager::get_recent_results(int limit)
     std::vector<MediaAnalysisRecord> results;
 
     std::stringstream query;
-    query << "SELECT id, file_path, file_name, file_type, analysis_result, tags, response_time, created_at FROM media_analysis";
+    query << "SELECT id, file_path, file_name, file_type, analysis_result, tags, response_time, created_at, file_id FROM media_analysis";
     query << " ORDER BY created_at DESC LIMIT " << limit;
 
     if (!execute_query(query.str()))
@@ -341,6 +345,7 @@ std::vector<MediaAnalysisRecord> DatabaseManager::get_recent_results(int limit)
         record.tags = row[5] ? row[5] : "";
         record.response_time = row[6] ? atof(row[6]) : 0.0;
         record.created_at = row[7] ? row[7] : "";
+        record.file_id = row[8] ? row[8] : "";
 
         results.push_back(record);
     }

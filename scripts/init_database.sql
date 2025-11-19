@@ -18,9 +18,11 @@ CREATE TABLE IF NOT EXISTS media_analysis (
     tags VARCHAR(1024),
     response_time DOUBLE,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    file_id VARCHAR(255),
     INDEX idx_file_type (file_type),
     INDEX idx_created_at (created_at),
-    INDEX idx_tags (tags(255))
+    INDEX idx_tags (tags(255)),
+    INDEX idx_file_id (file_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- 创建用户表（用于管理API密钥和用户设置）

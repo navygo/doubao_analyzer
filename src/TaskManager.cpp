@@ -55,6 +55,7 @@ std::future<TaskResult> TaskManager::addTask(const AnalysisTask &task)
         // 多线程处理 将请求的媒体URL和类型放入结果中
         task_result.result.raw_response["path"] = task.media_url;
         task_result.result.raw_response["type"] = task.media_type;
+        task_result.result.raw_response["file_id"] = task.file_id;
 
         promise->set_value(task_result);
     };
