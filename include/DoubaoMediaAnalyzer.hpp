@@ -27,6 +27,7 @@ private:
     std::string base_url_;
     std::unique_ptr<DatabaseManager> db_manager_;
     std::unique_ptr<VideoKeyframeAnalyzer> video_analyzer_;
+    bool use_ollama_; // 标识是否使用Ollama API
 
 public:
     explicit DoubaoMediaAnalyzer(const std::string &api_key);

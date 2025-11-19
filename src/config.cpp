@@ -3,9 +3,14 @@
 namespace config
 {
     // API配置
-    const std::string BASE_URL = "https://ark.cn-beijing.volces.com/api/v3/chat/completions";
-    const std::string MODEL_NAME = "doubao-1-5-vision-pro-32k-250115";
-    const std::string API_KEY = ""; // 默认空值，需要在命令行参数中指定
+    // const std::string BASE_URL = "https://ark.cn-beijing.volces.com/api/v3/chat/completions";
+    // const std::string MODEL_NAME = "doubao-1-5-vision-pro-32k-250115";
+    // const std::string API_KEY = ""; // 默认空值，需要在命令行参数中指定
+
+    // 默认使用本地Ollama API
+    const std::string BASE_URL = "http://172.22.4.84:11434/api/chat";
+    const std::string MODEL_NAME = "qwen3-vl:8b";
+    const std::string API_KEY = ""; // 默认空值，Ollama通常不需要API密钥
 
     // 默认值
     const int DEFAULT_MAX_TOKENS = 1500;

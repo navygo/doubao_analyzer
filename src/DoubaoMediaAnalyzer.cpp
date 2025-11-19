@@ -17,6 +17,11 @@ static size_t write_callback(void *contents, size_t size, size_t nmemb, std::str
 DoubaoMediaAnalyzer::DoubaoMediaAnalyzer(const std::string &api_key)
     : api_key_(api_key), base_url_(config::BASE_URL)
 {
+    // 检查是否使用Ollama API
+    use_ollama_ = (base_url_.find("172.29.176.1:11434") != std::string::npos ||
+                   base_url_.find("127.0.0.1:11434") != std::string::npos ||
+                   base_url_.find("11434/api") != std::string::npos);
+
     curl_global_init(CURL_GLOBAL_DEFAULT);
 
     // 从配置文件加载数据库配置
@@ -36,11 +41,14 @@ DoubaoMediaAnalyzer::DoubaoMediaAnalyzer(const std::string &api_key)
             config::DB_NAME,
             config::DB_PORT);
     }
-    
+
     // 初始化视频分析器
-    try {
+    try
+    {
         video_analyzer_ = std::make_unique<VideoKeyframeAnalyzer>();
-    } catch (const std::exception& e) {
+    }
+    catch (const std::exception &e)
+    {
         std::cerr << "初始化视频分析器失败: " << e.what() << std::endl;
     }
 }
@@ -63,18 +71,27 @@ bool DoubaoMediaAnalyzer::test_connection()
 
         if (result.success)
         {
-            std::cout << "✅ 豆包API连接正常" << std::endl;
+            if (use_ollama_)
+            {
+                std::cout << "✅ Ollama API连接正常" << std::endl;
+            }
+            else
+            {
+                std::cout << "✅ 豆包API连接正常" << std::endl;
+            }
             return true;
         }
         else
         {
-            std::cout << "❌ API连接失败: " << result.error << std::endl;
+            std::string api_type = use_ollama_ ? "Ollama" : "豆包";
+            std::cout << "❌ " << api_type << " API连接失败: " << result.error << std::endl;
             return false;
         }
     }
     catch (const std::exception &e)
     {
-        std::cout << "❌ 连接测试异常: " << e.what() << std::endl;
+        std::string api_type = use_ollama_ ? "Ollama" : "豆包";
+        std::cout << "❌ " << api_type << " 连接测试异常: " << e.what() << std::endl;
         return false;
     }
 }
@@ -183,7 +200,8 @@ AnalysisResult DoubaoMediaAnalyzer::analyze_single_video(const std::string &vide
         std::cout << "⏱️ [耗时] API请求耗时: " << result.response_time << " 秒" << std::endl;
         std::cout << "⏰ [时间戳] API请求完成时间: " << utils::get_formatted_timestamp() << std::endl;
 
-        if (result.success) {
+        if (result.success)
+        {
             std::cout << "📊 [响应] 令牌使用情况: " << result.usage.dump() << std::endl;
         }
     }
@@ -197,9 +215,9 @@ AnalysisResult DoubaoMediaAnalyzer::analyze_single_video(const std::string &vide
 }
 
 AnalysisResult DoubaoMediaAnalyzer::analyze_video_efficiently(const std::string &video_url,
-                                                        const std::string &prompt,
-                                                        int max_tokens,
-                                                        const std::string &method)
+                                                              const std::string &prompt,
+                                                              int max_tokens,
+                                                              const std::string &method)
 {
     AnalysisResult result;
 
@@ -221,9 +239,12 @@ AnalysisResult DoubaoMediaAnalyzer::analyze_video_efficiently(const std::string 
 
         // 提取关键帧或采样帧
         std::vector<std::string> frames_base64;
-        if (method == "keyframes") {
+        if (method == "keyframes")
+        {
             frames_base64 = video_analyzer_->extract_keyframes(video_url);
-        } else {
+        }
+        else
+        {
             frames_base64 = video_analyzer_->extract_sample_frames(video_url);
         }
 
@@ -277,10 +298,11 @@ AnalysisResult DoubaoMediaAnalyzer::analyze_video_efficiently(const std::string 
         std::cout << "⏱️ [耗时] API请求耗时: " << result.response_time << " 秒" << std::endl;
         std::cout << "⏰ [时间戳] API请求完成时间: " << utils::get_formatted_timestamp() << std::endl;
 
-        if (result.success) {
+        if (result.success)
+        {
             std::cout << "📊 [响应] 令牌使用情况: " << result.usage.dump() << std::endl;
         }
-        
+
         // 将视频元数据添加到响应中
         result.raw_response["video_metadata"] = {
             {"width", metadata.width},
@@ -288,13 +310,11 @@ AnalysisResult DoubaoMediaAnalyzer::analyze_video_efficiently(const std::string 
             {"duration", metadata.duration},
             {"fps", metadata.fps},
             {"codec", metadata.codec},
-            {"url", metadata.url}
-        };
-        
+            {"url", metadata.url}};
+
         result.raw_response["extraction_method"] = method;
         result.raw_response["extraction_time"] = frames_time;
         result.raw_response["frames_extracted"] = frames_base64.size();
-        
     }
     catch (const std::exception &e)
     {
@@ -484,7 +504,7 @@ std::vector<std::string> DoubaoMediaAnalyzer::extract_video_frames(const std::st
 
                 double frame_time = utils::get_current_time() - frame_start_time;
                 std::cout << "  ✅ 提取第" << i + 1 << "/" << frame_positions.size()
-                          << "帧 (位置: " << frame_positions[i] << "/" << total_frames << "), 耗时: " 
+                          << "帧 (位置: " << frame_positions[i] << "/" << total_frames << "), 耗时: "
                           << frame_time << "秒" << std::endl;
             }
         }
@@ -507,11 +527,179 @@ AnalysisResult DoubaoMediaAnalyzer::send_analysis_request(const nlohmann::json &
 
     try
     {
-        std::vector<std::string> headers = {
-            "Authorization: Bearer " + api_key_,
-            "Content-Type: application/json"};
+        std::vector<std::string> headers;
 
-        std::string payload_str = payload.dump();
+        // 根据API类型设置不同的请求头
+        if (use_ollama_)
+        {
+            // Ollama API不需要Authorization头
+            headers = {"Content-Type: application/json"};
+        }
+        else
+        {
+            // 豆包API需要Authorization头
+            headers = {
+                "Authorization: Bearer " + api_key_,
+                "Content-Type: application/json"};
+        }
+
+        // 根据API类型调整payload格式
+        nlohmann::json adjusted_payload;
+        if (use_ollama_)
+        {
+            // 检查是否使用/api/generate端点
+            bool is_generate_endpoint = (base_url_.find("/api/generate") != std::string::npos);
+
+            if (is_generate_endpoint)
+            {
+                // Ollama /api/generate端点格式
+                adjusted_payload["model"] = payload["model"];
+                adjusted_payload["prompt"] = "";
+                adjusted_payload["stream"] = false;
+
+                // 从messages中提取文本和图片
+                if (payload.contains("messages") && !payload["messages"].empty())
+                {
+                    auto messages = payload["messages"][0];
+                    if (messages.contains("content"))
+                    {
+                        auto content = messages["content"];
+                        std::string prompt_text = "";
+
+                        // 提取文本和图片
+                        if (content.is_array())
+                        {
+                            for (const auto &item : content)
+                            {
+                                if (item.contains("type") && item["type"] == "text")
+                                {
+                                    prompt_text += item["text"].get<std::string>();
+                                }
+                            }
+                        }
+                        else if (content.is_string())
+                        {
+                            prompt_text = content.get<std::string>();
+                        }
+
+                        adjusted_payload["prompt"] = prompt_text;
+                    }
+                }
+
+                // 添加选项
+                if (payload.contains("max_tokens"))
+                {
+                    adjusted_payload["options"] = {
+                        {"num_predict", payload["max_tokens"]}};
+                }
+                if (payload.contains("temperature"))
+                {
+                    if (!adjusted_payload.contains("options"))
+                    {
+                        adjusted_payload["options"] = nlohmann::json::object();
+                    }
+                    adjusted_payload["options"]["temperature"] = payload["temperature"];
+                }
+            }
+            else
+            {
+                // Ollama /api/chat端点格式
+                adjusted_payload["model"] = payload["model"];
+                
+                // 处理messages，确保content是字符串而不是数组
+                nlohmann::json adjusted_messages = nlohmann::json::array();
+                if (payload.contains("messages") && !payload["messages"].empty())
+                {
+                    for (const auto& msg : payload["messages"])
+                    {
+                        nlohmann::json adjusted_msg;
+                        adjusted_msg["role"] = msg["role"];
+                        
+                        // 将content数组转换为字符串
+                        if (msg.contains("content"))
+                        {
+                            if (msg["content"].is_array())
+                            {
+                                std::string content_str = "";
+                                std::vector<std::string> images;
+                                
+                                for (const auto& item : msg["content"])
+                                {
+                                    if (item.contains("type") && item["type"] == "text" && item.contains("text"))
+                                    {
+                                        content_str += item["text"].get<std::string>();
+                                    }
+                                    else if (item.contains("type") && item["type"] == "image_url" && item.contains("image_url"))
+                                    {
+                                        // 提取图片URL并转换为base64
+                                        auto img_url = item["image_url"];
+                                        if (img_url.contains("url"))
+                                        {
+                                            std::string url = img_url["url"].get<std::string>();
+                                            // 检查是否是base64格式的图片
+                                            if (url.find("data:image/") == 0 && url.find("base64,") != std::string::npos)
+                                            {
+                                                // 提取base64数据部分
+                                                size_t pos = url.find("base64,") + 7;
+                                                std::string base64_data = url.substr(pos);
+                                                
+                                                // 确保图片格式是Ollama支持的格式（JPEG或PNG）
+                                                if (url.find("data:image/jpeg") == 0 || url.find("data:image/jpg") == 0 || url.find("data:image/png") == 0)
+                                                {
+                                                    images.push_back(base64_data);
+                                                }
+                                                else
+                                                {
+                                                    // 尝试转换为JPEG格式
+                                                    // 这里可以添加转换代码，但目前先跳过不支持的格式
+                                                    std::cout << "⚠️ 跳过不支持的图片格式: " << url.substr(0, url.find(";")) << std::endl;
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                                
+                                // 设置文本内容
+                                adjusted_msg["content"] = content_str;
+                                
+                                // 如果有图片，添加到消息中
+                                if (!images.empty())
+                                {
+                                    adjusted_msg["images"] = images;
+                                }
+                            }
+                            else
+                            {
+                                adjusted_msg["content"] = msg["content"];
+                            }
+                        }
+                        adjusted_messages.push_back(adjusted_msg);
+                    }
+                }
+                adjusted_payload["messages"] = adjusted_messages;
+                adjusted_payload["stream"] = false;
+                if (payload.contains("max_tokens"))
+                {
+                    adjusted_payload["options"] = {
+                        {"num_predict", payload["max_tokens"]}};
+                }
+                if (payload.contains("temperature"))
+                {
+                    if (!adjusted_payload.contains("options"))
+                    {
+                        adjusted_payload["options"] = nlohmann::json::object();
+                    }
+                    adjusted_payload["options"]["temperature"] = payload["temperature"];
+                }
+            }
+        }
+        else
+        {
+            // 豆包API格式，直接使用原始payload
+            adjusted_payload = payload;
+        }
+
+        std::string payload_str = adjusted_payload.dump();
         std::string response = make_http_request(base_url_, "POST", payload_str, headers, timeout);
 
         return process_response(response, 0); // response_time will be set by caller
@@ -533,33 +721,81 @@ AnalysisResult DoubaoMediaAnalyzer::process_response(const std::string &response
     {
         auto json_response = nlohmann::json::parse(response_text);
 
-        if (json_response.contains("choices") && json_response["choices"].is_array() &&
-            !json_response["choices"].empty())
+        // 根据API类型处理不同的响应格式
+        if (use_ollama_)
         {
+            // 检查是否使用/api/generate端点
+            bool is_generate_endpoint = (base_url_.find("/api/generate") != std::string::npos);
 
-            auto choice = json_response["choices"][0];
-            if (choice.contains("message") && choice["message"].contains("content"))
+            if (is_generate_endpoint)
             {
-                result.success = true;
-                result.content = choice["message"]["content"].get<std::string>();
-
-                if (json_response.contains("usage"))
+                // Ollama /api/generate端点响应格式
+                if (json_response.contains("response"))
                 {
-                    result.usage = json_response["usage"];
-                }
+                    result.success = true;
+                    result.content = json_response["response"].get<std::string>();
 
-                result.raw_response = json_response;
+                    // Ollama可能不返回usage信息，创建一个空的
+                    result.usage = nlohmann::json::object();
+
+                    result.raw_response = json_response;
+                }
+                else
+                {
+                    result.success = false;
+                    result.error = "Ollama /api/generate API响应格式异常: " + response_text;
+                }
             }
             else
             {
-                result.success = false;
-                result.error = "响应格式异常: 缺少content字段";
+                // Ollama /api/chat端点响应格式
+                if (json_response.contains("message") && json_response["message"].contains("content"))
+                {
+                    result.success = true;
+                    result.content = json_response["message"]["content"].get<std::string>();
+
+                    // Ollama可能不返回usage信息，创建一个空的
+                    result.usage = nlohmann::json::object();
+
+                    result.raw_response = json_response;
+                }
+                else
+                {
+                    result.success = false;
+                    result.error = "Ollama /api/chat API响应格式异常: " + response_text;
+                }
             }
         }
         else
         {
-            result.success = false;
-            result.error = "响应格式异常: " + response_text;
+            // 豆包API响应格式
+            if (json_response.contains("choices") && json_response["choices"].is_array() &&
+                !json_response["choices"].empty())
+            {
+                auto choice = json_response["choices"][0];
+                if (choice.contains("message") && choice["message"].contains("content"))
+                {
+                    result.success = true;
+                    result.content = choice["message"]["content"].get<std::string>();
+
+                    if (json_response.contains("usage"))
+                    {
+                        result.usage = json_response["usage"];
+                    }
+
+                    result.raw_response = json_response;
+                }
+                else
+                {
+                    result.success = false;
+                    result.error = "响应格式异常: 缺少content字段";
+                }
+            }
+            else
+            {
+                result.success = false;
+                result.error = "响应格式异常: " + response_text;
+            }
         }
     }
     catch (const nlohmann::json::parse_error &e)

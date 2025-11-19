@@ -659,7 +659,19 @@ std::vector<ExcelRowData> ExcelProcessor::read_media_from_db()
                 media_row.content_type = row[1] ? row[1] : "";
                 media_row.location = row[2] ? row[2] : "";
                 media_row.content_id = row[3] ? row[3] : "";
-                media_row.url = row[4] ? row[4] : "";
+                // 处理可能包含多个URL的情况，只取第一个
+                std::string url_field = row[4] ? row[4] : "";
+                if (!url_field.empty()) {
+                    // 查找第一个逗号，如果有多个URL
+                    size_t comma_pos = url_field.find(',');
+                    if (comma_pos != std::string::npos) {
+                        media_row.url = url_field.substr(0, comma_pos);
+                    } else {
+                        media_row.url = url_field;
+                    }
+                } else {
+                    media_row.url = "";
+                }
                 media_row.tags = row[5] ? row[5] : "";
 
                 // 只添加有URL的行
