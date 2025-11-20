@@ -39,14 +39,11 @@ std::string get_video_prompta()
 
 std::string get_image_prompt()
 {
-    return R"(请仔细观察图片内容，为图片生成合适的标签。要求：
-1. 仔细观察图片的各个细节
-2. 生成的标签要准确反映图片的主题、场景、动作等
-3. 请严格按照以下多级标签体系对进行分类：
- 一级标签：选择最概括的主类别。
- 二级标签：在一级标签下选择更具体的子类别。
- 三级标签：在二级标签下选择最精准的描述性标签
-4. 输出格式：通过分析，生成的标签为：['一级标签', '二级标签', '三级标签'])";
+    return R"(请为图片生成简洁的三级分类标签。要求：
+1. 一级标签：最概括的主类别
+2. 二级标签：更具体的子类别
+3. 三级标签：最精准的描述
+4. 输出格式：['一级', '二级', '三级'])";
 }
 
 std::string get_video_prompt()
@@ -446,7 +443,16 @@ ApiResponse ApiServer::process_request(const std::string &request_json, const st
 
             ApiRequest request;
             request.media_type = request_data["media_type"].get<std::string>();
-            request.media_url = request_data["media_url"].get<std::string>();
+
+            // 处理多个URL的情况，只取第一个
+            std::string media_url = request_data["media_url"].get<std::string>();
+            size_t comma_pos = media_url.find(",");
+            if (comma_pos != std::string::npos)
+            {
+                media_url = media_url.substr(0, comma_pos);
+                std::cout << "🔍 [信息] 检测到多个URL，只使用第一个: " << media_url << std::endl;
+            }
+            request.media_url = media_url;
             request.prompt = request_data.value("prompt", "");
             request.max_tokens = request_data.value("max_tokens", 1500);
             request.video_frames = request_data.value("video_frames", 5);
@@ -554,7 +560,18 @@ ApiResponse ApiServer::process_request(const std::string &request_json, const st
 
                 ApiRequest req;
                 req.media_type = req_json["media_type"].get<std::string>();
-                req.media_url = req_json["media_url"].get<std::string>();
+
+                // 处理多个URL的情况，只取第一个
+                // req.media_url = req_json["media_url"].get<std::string>();
+                std::string media_url = req_json["media_url"].get<std::string>();
+                size_t comma_pos = media_url.find(",");
+                if (comma_pos != std::string::npos)
+                {
+                    media_url = media_url.substr(0, comma_pos);
+                    std::cout << "🔍 [信息] 检测到多个URL，只使用第一个: " << media_url << std::endl;
+                }
+                req.media_url = media_url;
+
                 req.prompt = req_json.value("prompt", "");
                 req.max_tokens = req_json.value("max_tokens", 1500);
                 req.video_frames = req_json.value("video_frames", 5);
@@ -696,7 +713,8 @@ ApiResponse ApiServer::handle_video_analysis(const ApiRequest &request)
             request.media_url,
             prompt,
             request.max_tokens,
-            "keyframes"); // 使用关键帧提取方法
+            "keyframes",           // 使用关键帧提取方法
+            request.video_frames); // 传递请求的帧数
 
         double analysis_time = utils::get_current_time() - analysis_start_time;
         timing_info["analysis_seconds"] = analysis_time;

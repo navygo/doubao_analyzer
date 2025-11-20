@@ -7,6 +7,8 @@
 #include "DatabaseManager.hpp"
 #include "ConfigManager.hpp"
 #include "VideoKeyframeAnalyzer.hpp"
+#include "utils.hpp"
+#include "config.hpp"
 
 struct AnalysisResult
 {
@@ -25,12 +27,23 @@ class DoubaoMediaAnalyzer
 private:
     std::string api_key_;
     std::string base_url_;
+    std::string model_name_;
     std::unique_ptr<DatabaseManager> db_manager_;
     std::unique_ptr<VideoKeyframeAnalyzer> video_analyzer_;
     bool use_ollama_; // 标识是否使用Ollama API
 
+    // 判断是否使用Ollama API
+    bool is_ollama_api(const std::string &url) const;
+
 public:
+    // 使用默认配置构造函数
     explicit DoubaoMediaAnalyzer(const std::string &api_key);
+
+    // 使用自定义API配置构造函数
+    DoubaoMediaAnalyzer(const std::string &api_key, const std::string &base_url, const std::string &model_name);
+
+    // 使用ApiConfig结构体构造函数
+    explicit DoubaoMediaAnalyzer(const config::ApiConfig &api_config);
 
     // 连接测试
     bool test_connection();
@@ -45,12 +58,13 @@ public:
                                         const std::string &prompt,
                                         int max_tokens = 2000,
                                         int num_frames = 5);
-    
+
     // 高效视频分析（使用关键帧，无需完整下载）
     AnalysisResult analyze_video_efficiently(const std::string &video_url,
-                                           const std::string &prompt,
-                                           int max_tokens = 2000,
-                                           const std::string &method = "keyframes");
+                                             const std::string &prompt,
+                                             int max_tokens = 2000,
+                                             const std::string &method = "keyframes",
+                                             int num_frames = 5);
 
     // 批量分析
     std::vector<AnalysisResult> batch_analyze(const std::string &media_folder,
@@ -86,5 +100,6 @@ private:
                                   const std::string &method,
                                   const std::string &data,
                                   const std::vector<std::string> &headers,
-                                  int timeout);
+                                  int timeout,
+                                  bool enable_http2);
 };

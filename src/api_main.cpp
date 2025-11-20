@@ -35,12 +35,30 @@ void print_usage()
 
 int main(int argc, char *argv[])
 {
+
+    // 解析命令行参数
+    std::string base_url;   // 新增：API基础URL
+    std::string model_name; // 新增：模型名称
+    std::string image_path;
+    std::string video_path;
+    std::string folder_path;
+    std::string file_type = "all";
+    std::string prompt;
+    std::string output_path;
+    int max_files = 5;
+    int video_frames = 5;
+    bool save_to_db = false;
+    std::string query_db;
+    std::string query_tag;
+    bool show_db_stats = false;
+
     std::string api_key;
     int port = 8080;
     std::string host = "0.0.0.0";
 
     // 解析命令行参数
-    for (int i = 1; i < argc; i++)
+
+    for (int i = 1; i < argc; ++i)
     {
         std::string arg = argv[i];
 
@@ -53,22 +71,42 @@ int main(int argc, char *argv[])
         {
             api_key = argv[++i];
         }
-        else if (arg == "--port" && i + 1 < argc)
+        else if (arg == "--base-url" && i + 1 < argc)
         {
-            port = std::stoi(argv[++i]);
+            base_url = argv[++i];
         }
-        else if (arg == "--host" && i + 1 < argc)
+        else if (arg == "--model-name" && i + 1 < argc)
         {
-            host = argv[++i];
+            model_name = argv[++i];
         }
-    }
-
-    // 检查API密钥
-    if (api_key.empty())
-    {
-        std::cout << "❌ 请提供豆包API密钥" << std::endl;
-        print_usage();
-        return 1;
+        else if (arg == "--prompt" && i + 1 < argc)
+        {
+            prompt = argv[++i];
+        }
+        else if (arg == "--max-files" && i + 1 < argc)
+        {
+            max_files = std::stoi(argv[++i]);
+        }
+        else if (arg == "--video-frames" && i + 1 < argc)
+        {
+            video_frames = std::stoi(argv[++i]);
+        }
+        else if (arg == "--save-to-db")
+        {
+            save_to_db = true;
+        }
+        else if (arg == "--query-db" && i + 1 < argc)
+        {
+            query_db = argv[++i];
+        }
+        else if (arg == "--query-tag" && i + 1 < argc)
+        {
+            query_tag = argv[++i];
+        }
+        else if (arg == "--db-stats")
+        {
+            show_db_stats = true;
+        }
     }
 
     // 设置信号处理

@@ -14,14 +14,94 @@ static size_t write_callback(void *contents, size_t size, size_t nmemb, std::str
     return total_size;
 }
 
+// 判断是否使用Ollama API
+bool DoubaoMediaAnalyzer::is_ollama_api(const std::string &url) const
+{
+    return (url.find("172.29.176.1:11434") != std::string::npos ||
+            url.find("127.0.0.1:11434") != std::string::npos ||
+            url.find("11434/api") != std::string::npos);
+}
+
+// 使用默认配置构造函数
 DoubaoMediaAnalyzer::DoubaoMediaAnalyzer(const std::string &api_key)
-    : api_key_(api_key), base_url_(config::BASE_URL)
+    : api_key_(api_key), base_url_(config::BASE_URL), model_name_(config::MODEL_NAME)
 {
     // 检查是否使用Ollama API
-    use_ollama_ = (base_url_.find("172.29.176.1:11434") != std::string::npos ||
-                   base_url_.find("127.0.0.1:11434") != std::string::npos ||
-                   base_url_.find("11434/api") != std::string::npos);
+    use_ollama_ = is_ollama_api(base_url_);
 
+    curl_global_init(CURL_GLOBAL_DEFAULT);
+
+    // 从配置文件加载数据库配置
+    ConfigManager config_manager;
+    if (config_manager.load_config())
+    {
+        const auto &db_config = config_manager.get_database_config();
+        db_manager_ = std::make_unique<DatabaseManager>(db_config);
+    }
+    else
+    {
+        // 使用默认配置
+        db_manager_ = std::make_unique<DatabaseManager>(
+            config::DB_HOST,
+            config::DB_USER,
+            config::DB_PASSWORD,
+            config::DB_NAME,
+            config::DB_PORT);
+    }
+
+    // 初始化视频分析器
+    try
+    {
+        video_analyzer_ = std::make_unique<VideoKeyframeAnalyzer>();
+    }
+    catch (const std::exception &e)
+    {
+        std::cerr << "初始化视频分析器失败: " << e.what() << std::endl;
+    }
+}
+
+// 使用自定义API配置构造函数
+DoubaoMediaAnalyzer::DoubaoMediaAnalyzer(const std::string &api_key, const std::string &base_url, const std::string &model_name)
+    : api_key_(api_key), base_url_(base_url), model_name_(model_name)
+{
+    // 检查是否使用Ollama API
+    use_ollama_ = is_ollama_api(base_url_);
+
+    curl_global_init(CURL_GLOBAL_DEFAULT);
+
+    // 从配置文件加载数据库配置
+    ConfigManager config_manager;
+    if (config_manager.load_config())
+    {
+        const auto &db_config = config_manager.get_database_config();
+        db_manager_ = std::make_unique<DatabaseManager>(db_config);
+    }
+    else
+    {
+        // 使用默认配置
+        db_manager_ = std::make_unique<DatabaseManager>(
+            config::DB_HOST,
+            config::DB_USER,
+            config::DB_PASSWORD,
+            config::DB_NAME,
+            config::DB_PORT);
+    }
+
+    // 初始化视频分析器
+    try
+    {
+        video_analyzer_ = std::make_unique<VideoKeyframeAnalyzer>();
+    }
+    catch (const std::exception &e)
+    {
+        std::cerr << "初始化视频分析器失败: " << e.what() << std::endl;
+    }
+}
+
+// 使用ApiConfig结构体构造函数
+DoubaoMediaAnalyzer::DoubaoMediaAnalyzer(const config::ApiConfig &api_config)
+    : api_key_(api_config.api_key), base_url_(api_config.base_url), model_name_(api_config.model_name), use_ollama_(api_config.use_ollama)
+{
     curl_global_init(CURL_GLOBAL_DEFAULT);
 
     // 从配置文件加载数据库配置
@@ -62,8 +142,39 @@ bool DoubaoMediaAnalyzer::test_connection()
 {
     try
     {
+        // 首先检查Ollama服务是否可访问
+        if (use_ollama_)
+        {
+            std::cout << "🔍 [检查] 正在检查Ollama服务状态..." << std::endl;
+
+            // 简单的HTTP GET请求检查服务是否可用
+            // std::string check_url = base_url_.substr(0, base_url_.find_last_of("/"));
+            //
+            std::string check_url = base_url_.substr(0, base_url_.rfind("/api"));
+            // 结果: "http://localhost:11434"
+            std::cout << "🔍 [检查] 检查URL: " << check_url << std::endl;
+
+            try
+            {
+                std::vector<std::string> headers = {"Content-Type: application/json"};
+                std::string response = make_http_request(check_url, "GET", "", headers, 5, false);
+                if (!response.empty())
+                {
+                    std::cout << "✅ [检查] Ollama服务响应正常" << std::endl;
+                }
+                else
+                {
+                    std::cout << "❌ [检查] Ollama服务无响应" << std::endl;
+                }
+            }
+            catch (const std::exception &e)
+            {
+                std::cout << "❌ [检查] Ollama服务检查失败: " << e.what() << std::endl;
+            }
+        }
+
         nlohmann::json payload = {
-            {"model", config::MODEL_NAME},
+            {"model", model_name_},
             {"messages", {{{"role", "user"}, {"content", "请回复'连接测试成功'"}}}},
             {"max_tokens", 50}};
 
@@ -114,7 +225,7 @@ AnalysisResult DoubaoMediaAnalyzer::analyze_single_image(const std::string &imag
         std::string image_data = utils::base64_encode_file(image_path);
 
         nlohmann::json payload = {
-            {"model", config::MODEL_NAME},
+            {"model", model_name_},
             {"messages", {{{"role", "user"}, {"content", {{{"type", "image_url"}, {"image_url", {{"url", "data:image/jpeg;base64," + image_data}}}}, {{"type", "text"}, {"text", prompt}}}}}}},
             {"max_tokens", max_tokens},
             {"temperature", config::DEFAULT_TEMPERATURE},
@@ -182,7 +293,7 @@ AnalysisResult DoubaoMediaAnalyzer::analyze_single_video(const std::string &vide
         }
 
         nlohmann::json payload = {
-            {"model", config::MODEL_NAME},
+            {"model", model_name_},
             {"messages", {{{"role", "user"}, {"content", content}}}},
             {"max_tokens", max_tokens},
             {"temperature", config::DEFAULT_TEMPERATURE},
@@ -217,7 +328,8 @@ AnalysisResult DoubaoMediaAnalyzer::analyze_single_video(const std::string &vide
 AnalysisResult DoubaoMediaAnalyzer::analyze_video_efficiently(const std::string &video_url,
                                                               const std::string &prompt,
                                                               int max_tokens,
-                                                              const std::string &method)
+                                                              const std::string &method,
+                                                              int num_frames)
 {
     AnalysisResult result;
 
@@ -241,11 +353,11 @@ AnalysisResult DoubaoMediaAnalyzer::analyze_video_efficiently(const std::string 
         std::vector<std::string> frames_base64;
         if (method == "keyframes")
         {
-            frames_base64 = video_analyzer_->extract_keyframes(video_url);
+            frames_base64 = video_analyzer_->extract_keyframes(video_url, num_frames); // 传递请求的帧数
         }
         else
         {
-            frames_base64 = video_analyzer_->extract_sample_frames(video_url);
+            frames_base64 = video_analyzer_->extract_sample_frames(video_url, num_frames); // 传递请求的帧数
         }
 
         double frames_time = utils::get_current_time() - frames_start_time;
@@ -280,7 +392,7 @@ AnalysisResult DoubaoMediaAnalyzer::analyze_video_efficiently(const std::string 
         }
 
         nlohmann::json payload = {
-            {"model", config::MODEL_NAME},
+            {"model", model_name_},
             {"messages", {{{"role", "user"}, {"content", content}}}},
             {"max_tokens", max_tokens},
             {"temperature", config::DEFAULT_TEMPERATURE},
@@ -500,6 +612,13 @@ std::vector<std::string> DoubaoMediaAnalyzer::extract_video_frames(const std::st
                 // 编码为base64
                 auto jpeg_data = utils::encode_image_to_jpeg(resized_frame, 85);
                 std::string frame_base64 = utils::base64_encode(jpeg_data);
+
+                // 如果使用Ollama API，对帧数据进行优化
+                if (use_ollama_)
+                {
+                    frame_base64 = utils::optimize_image_for_ollama(frame_base64, "data:image/jpeg;base64,");
+                }
+
                 frames_base64.push_back(frame_base64);
 
                 double frame_time = utils::get_current_time() - frame_start_time;
@@ -545,7 +664,7 @@ AnalysisResult DoubaoMediaAnalyzer::send_analysis_request(const nlohmann::json &
 
         // 根据API类型调整payload格式
         nlohmann::json adjusted_payload;
-        if (use_ollama_)
+        if (use_ollama_) // 先假设所有请求都不是Ollama API，便于调试
         {
             // 检查是否使用/api/generate端点
             bool is_generate_endpoint = (base_url_.find("/api/generate") != std::string::npos);
@@ -554,7 +673,7 @@ AnalysisResult DoubaoMediaAnalyzer::send_analysis_request(const nlohmann::json &
             {
                 // Ollama /api/generate端点格式
                 adjusted_payload["model"] = payload["model"];
-                adjusted_payload["prompt"] = "";
+                adjusted_payload["prompt"] = "请分析这张图片"; // 默认提示，将被实际提示覆盖
                 adjusted_payload["stream"] = false;
 
                 // 从messages中提取文本和图片
@@ -592,6 +711,45 @@ AnalysisResult DoubaoMediaAnalyzer::send_analysis_request(const nlohmann::json &
                     adjusted_payload["options"] = {
                         {"num_predict", payload["max_tokens"]}};
                 }
+
+                // 处理图片数据 - 优化图片处理
+                if (payload.contains("messages") && !payload["messages"].empty())
+                {
+                    auto messages = payload["messages"][0];
+                    if (messages.contains("content"))
+                    {
+                        auto content = messages["content"];
+                        if (content.is_array())
+                        {
+                            std::vector<std::string> optimized_images;
+                            for (const auto &item : content)
+                            {
+                                if (item.contains("type") && item["type"] == "image_url" && item.contains("image_url"))
+                                {
+                                    auto img_url = item["image_url"];
+                                    if (img_url.contains("url"))
+                                    {
+                                        std::string url = img_url["url"].get<std::string>();
+                                        if (url.find("data:image/") == 0 && url.find("base64,") != std::string::npos)
+                                        {
+                                            size_t pos = url.find("base64,") + 7;
+                                            std::string base64_data = url.substr(pos);
+
+                                            // 优化：对图片数据进行压缩和格式转换（如果需要）
+                                            std::string optimized_data = utils::optimize_image_for_ollama(base64_data, url);
+                                            optimized_images.push_back(optimized_data);
+                                        }
+                                    }
+                                }
+                            }
+
+                            if (!optimized_images.empty())
+                            {
+                                adjusted_payload["images"] = optimized_images;
+                            }
+                        }
+                    }
+                }
                 if (payload.contains("temperature"))
                 {
                     if (!adjusted_payload.contains("options"))
@@ -605,25 +763,25 @@ AnalysisResult DoubaoMediaAnalyzer::send_analysis_request(const nlohmann::json &
             {
                 // Ollama /api/chat端点格式
                 adjusted_payload["model"] = payload["model"];
-                
+
                 // 处理messages，确保content是字符串而不是数组
                 nlohmann::json adjusted_messages = nlohmann::json::array();
                 if (payload.contains("messages") && !payload["messages"].empty())
                 {
-                    for (const auto& msg : payload["messages"])
+                    for (const auto &msg : payload["messages"])
                     {
                         nlohmann::json adjusted_msg;
                         adjusted_msg["role"] = msg["role"];
-                        
+
                         // 将content数组转换为字符串
                         if (msg.contains("content"))
                         {
                             if (msg["content"].is_array())
                             {
                                 std::string content_str = "";
-                                std::vector<std::string> images;
-                                
-                                for (const auto& item : msg["content"])
+                                std::vector<std::string> optimized_images;
+
+                                for (const auto &item : msg["content"])
                                 {
                                     if (item.contains("type") && item["type"] == "text" && item.contains("text"))
                                     {
@@ -642,30 +800,22 @@ AnalysisResult DoubaoMediaAnalyzer::send_analysis_request(const nlohmann::json &
                                                 // 提取base64数据部分
                                                 size_t pos = url.find("base64,") + 7;
                                                 std::string base64_data = url.substr(pos);
-                                                
-                                                // 确保图片格式是Ollama支持的格式（JPEG或PNG）
-                                                if (url.find("data:image/jpeg") == 0 || url.find("data:image/jpg") == 0 || url.find("data:image/png") == 0)
-                                                {
-                                                    images.push_back(base64_data);
-                                                }
-                                                else
-                                                {
-                                                    // 尝试转换为JPEG格式
-                                                    // 这里可以添加转换代码，但目前先跳过不支持的格式
-                                                    std::cout << "⚠️ 跳过不支持的图片格式: " << url.substr(0, url.find(";")) << std::endl;
-                                                }
+
+                                                // 优化：对图片数据进行压缩和格式转换
+                                                std::string optimized_data = utils::optimize_image_for_ollama(base64_data, url);
+                                                optimized_images.push_back(optimized_data);
                                             }
                                         }
                                     }
                                 }
-                                
+
                                 // 设置文本内容
                                 adjusted_msg["content"] = content_str;
-                                
+
                                 // 如果有图片，添加到消息中
-                                if (!images.empty())
+                                if (!optimized_images.empty())
                                 {
-                                    adjusted_msg["images"] = images;
+                                    adjusted_msg["images"] = optimized_images;
                                 }
                             }
                             else
@@ -700,8 +850,15 @@ AnalysisResult DoubaoMediaAnalyzer::send_analysis_request(const nlohmann::json &
         }
 
         std::string payload_str = adjusted_payload.dump();
-        std::string response = make_http_request(base_url_, "POST", payload_str, headers, timeout);
-
+        std::cout << "🔍 [调试] Ollama API请求URL: " << base_url_ << std::endl;
+        // std::cout << "🔍 [调试] Ollama API请求数据: " << payload_str << std::endl;
+        bool enable_http2 = true; // 根据需要启用HTTP/2
+        if (use_ollama_)          // 先假设所有请求都不是Ollama API，便于调试
+        {
+            enable_http2 = false; // Ollama API不支持HTTP/2
+        }
+        std::string response = make_http_request(base_url_, "POST", payload_str, headers, timeout, enable_http2);
+        //
         return process_response(response, 0); // response_time will be set by caller
     }
     catch (const std::exception &e)
@@ -812,27 +969,56 @@ AnalysisResult DoubaoMediaAnalyzer::process_response(const std::string &response
     return result;
 }
 
+// 静态CURL句柄，用于连接复用
+static CURL *shared_curl = nullptr;
+static std::mutex curl_mutex;
+
 std::string DoubaoMediaAnalyzer::make_http_request(const std::string &url,
                                                    const std::string &method,
                                                    const std::string &data,
                                                    const std::vector<std::string> &headers,
-                                                   int timeout)
+                                                   int timeout,
+                                                   bool enable_http2)
 {
-    CURL *curl = curl_easy_init();
-    if (!curl)
+
+    std::lock_guard<std::mutex> lock(curl_mutex);
+
+    // 初始化或重用CURL句柄
+    if (!shared_curl)
     {
-        throw std::runtime_error("Failed to initialize CURL");
+        shared_curl = curl_easy_init();
+        // 设置全局选项
+        curl_easy_setopt(shared_curl, CURLOPT_TCP_KEEPALIVE, 1L);
+        curl_easy_setopt(shared_curl, CURLOPT_TCP_KEEPIDLE, 60L);
+        curl_easy_setopt(shared_curl, CURLOPT_TCP_KEEPINTVL, 30L);
+        curl_easy_setopt(shared_curl, CURLOPT_FORBID_REUSE, 0L);
     }
 
     std::string response;
 
-    curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
-    curl_easy_setopt(curl, CURLOPT_CUSTOMREQUEST, method.c_str());
-    curl_easy_setopt(curl, CURLOPT_POSTFIELDS, data.c_str());
-    curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE, data.length());
-    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_callback);
-    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response);
-    curl_easy_setopt(curl, CURLOPT_TIMEOUT, timeout);
+    // 设置请求特定选项
+    curl_easy_setopt(shared_curl, CURLOPT_URL, url.c_str());
+    curl_easy_setopt(shared_curl, CURLOPT_CUSTOMREQUEST, method.c_str());
+    curl_easy_setopt(shared_curl, CURLOPT_POSTFIELDS, data.c_str());
+    curl_easy_setopt(shared_curl, CURLOPT_POSTFIELDSIZE, data.length());
+    curl_easy_setopt(shared_curl, CURLOPT_WRITEFUNCTION, write_callback);
+    curl_easy_setopt(shared_curl, CURLOPT_WRITEDATA, &response);
+    curl_easy_setopt(shared_curl, CURLOPT_TIMEOUT, timeout);
+
+    // 启用HTTP/2和压缩
+    // 根据参数决定是否启用HTTP/2
+    // curl_easy_setopt(shared_curl, CURLOPT_HTTP_VERSION, CURL_HTTP_VERSION_2_PRIOR_KNOWLEDGE);
+    if (enable_http2)
+    {
+        curl_easy_setopt(shared_curl, CURLOPT_HTTP_VERSION, CURL_HTTP_VERSION_2_PRIOR_KNOWLEDGE);
+    }
+    else
+    {
+        // 如果不支持HTTP/2，使用HTTP/1.1
+        curl_easy_setopt(shared_curl, CURLOPT_HTTP_VERSION, CURL_HTTP_VERSION_1_1);
+    }
+    // 压缩
+    curl_easy_setopt(shared_curl, CURLOPT_ACCEPT_ENCODING, "gzip, deflate");
 
     // 设置headers
     struct curl_slist *header_list = nullptr;
@@ -840,16 +1026,26 @@ std::string DoubaoMediaAnalyzer::make_http_request(const std::string &url,
     {
         header_list = curl_slist_append(header_list, header.c_str());
     }
-    curl_easy_setopt(curl, CURLOPT_HTTPHEADER, header_list);
+    curl_easy_setopt(shared_curl, CURLOPT_HTTPHEADER, header_list);
 
-    CURLcode res = curl_easy_perform(curl);
+    // 执行请求
+    CURLcode res = curl_easy_perform(shared_curl);
 
     curl_slist_free_all(header_list);
-    curl_easy_cleanup(curl);
 
     if (res != CURLE_OK)
     {
-        throw std::runtime_error("HTTP请求失败: " + std::string(curl_easy_strerror(res)));
+        std::string error_msg = "HTTP请求失败: " + std::string(curl_easy_strerror(res));
+
+        // 添加更多调试信息
+        long response_code;
+        curl_easy_getinfo(shared_curl, CURLINFO_RESPONSE_CODE, &response_code);
+        if (response_code > 0)
+        {
+            error_msg += " (HTTP状态码: " + std::to_string(response_code) + ")";
+        }
+
+        throw std::runtime_error(error_msg);
     }
 
     return response;

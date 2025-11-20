@@ -199,7 +199,58 @@ namespace utils
             throw std::runtime_error("Cannot open file: " + file_path);
         }
 
+        // 读取文件到缓冲区
         std::vector<unsigned char> buffer(std::istreambuf_iterator<char>(file), {});
+
+        // 如果图片过大，先进行压缩
+        if (buffer.size() > 1024 * 1024) // 如果大于1MB
+        {
+            // 使用OpenCV读取并压缩图片
+            cv::Mat img = cv::imread(file_path);
+            if (!img.empty())
+            {
+                // 调整图片尺寸，使用更适合分类的小尺寸
+                // 对于三级分类任务，小尺寸更高效且准确
+                int max_size = 512; // 减小到512像素，适合分类任务
+
+                // 如果图片非常大，先进行中等缩放
+                if (img.cols > 2048 || img.rows > 2048)
+                {
+                    double scale = 2048.0 / std::max(img.cols, img.rows);
+                    cv::Mat temp;
+                    cv::resize(img, temp, cv::Size(), scale, scale);
+                    img = temp;
+                }
+
+                // 最终调整到目标尺寸
+                if (img.cols > max_size || img.rows > max_size)
+                {
+                    double scale = max_size / (double)std::max(img.cols, img.rows);
+                    cv::Mat resized;
+                    // 使用INTER_AREA插值，适合缩小图片
+                    cv::resize(img, resized, cv::Size(max_size, max_size * img.rows / img.cols), 0, 0, cv::INTER_AREA);
+                    img = resized;
+                }
+
+                // 压缩图片质量为75%，进一步减小文件大小  可以优化的地方 压缩图片质量比率可调整
+                std::vector<uchar> jpeg_data;
+                std::vector<int> params = {cv::IMWRITE_JPEG_QUALITY, 75, cv::IMWRITE_JPEG_OPTIMIZE, 1};
+                cv::imencode(".jpg", img, jpeg_data, params);
+
+                // 如果压缩后仍然较大，进一步降低质量 可以优化的地方 jpeg_data.size() > 100 * 1024
+                if (jpeg_data.size() > 200 * 1024) // 如果大于200KB
+                {
+                    params = {cv::IMWRITE_JPEG_QUALITY, 60, cv::IMWRITE_JPEG_OPTIMIZE, 1};
+                    jpeg_data.clear();
+                    cv::imencode(".jpg", img, jpeg_data, params);
+                }
+
+                // 使用压缩后的数据
+                return base64_encode(jpeg_data);
+            }
+        }
+
+        // 小图片直接编码
         return base64_encode(buffer);
     }
 
@@ -290,6 +341,81 @@ namespace utils
     {
         // 使用GPU加速（如果可用）
         return gpu::GPUManager::resize_image(image, max_size);
+    }
+
+    std::string optimize_image_for_ollama(const std::string& base64_data, const std::string& image_url)
+    {
+        try 
+        {
+            // 解码base64数据
+            std::vector<unsigned char> image_data = base64_decode(base64_data);
+
+            // 从内存中加载图像
+            cv::Mat image = cv::imdecode(image_data, cv::IMREAD_COLOR);
+            if (image.empty()) 
+            {
+                std::cout << "⚠️ 无法解码图片数据，返回原始数据" << std::endl;
+                return base64_data;
+            }
+
+            // 确保图片格式是Ollama支持的格式（JPEG或PNG）
+            std::string output_format = ".jpg"; // 默认使用JPEG格式
+
+            // 如果原始格式是PNG，可以考虑保留PNG格式（对于透明度重要的图像）
+            if (image_url.find("data:image/png") == 0) 
+            {
+                output_format = ".png";
+            }
+
+            // 调整图像大小以减少数据量
+            int max_dimension = 1024; // Ollama适合的最大尺寸
+
+            // 如果图像太大，进行缩放
+            if (image.cols > max_dimension || image.rows > max_dimension) 
+            {
+                double scale = std::min(
+                    max_dimension / static_cast<double>(image.cols),
+                    max_dimension / static_cast<double>(image.rows)
+                );
+
+                cv::Mat resized_image;
+                cv::resize(image, resized_image, cv::Size(), scale, scale, cv::INTER_AREA);
+                image = resized_image;
+            }
+
+            // 编码图像
+            std::vector<unsigned char> optimized_data;
+            std::vector<int> params;
+
+            if (output_format == ".png") 
+            {
+                // PNG压缩参数
+                params = {cv::IMWRITE_PNG_COMPRESSION, 6};
+                cv::imencode(output_format, image, optimized_data, params);
+            } 
+            else 
+            {
+                // JPEG压缩参数
+                params = {cv::IMWRITE_JPEG_QUALITY, 85, cv::IMWRITE_JPEG_OPTIMIZE, 1};
+                cv::imencode(output_format, image, optimized_data, params);
+
+                // 如果JPEG仍然太大，进一步降低质量
+                if (optimized_data.size() > 300 * 1024) // 300KB
+                {
+                    params = {cv::IMWRITE_JPEG_QUALITY, 70, cv::IMWRITE_JPEG_OPTIMIZE, 1};
+                    optimized_data.clear();
+                    cv::imencode(output_format, image, optimized_data, params);
+                }
+            }
+
+            // 重新编码为base64
+            return base64_encode(optimized_data);
+        } 
+        catch (const std::exception& e) 
+        {
+            std::cout << "⚠️ 图片优化失败: " << e.what() << "，返回原始数据" << std::endl;
+            return base64_data;
+        }
     }
 
     // JSON工具
@@ -397,8 +523,33 @@ namespace utils
     }
 
     // 文件下载工具
+    // 简单的URL缓存，避免重复下载
+    static std::unordered_map<std::string, std::string> url_cache;
+    static std::mutex cache_mutex;
+
     bool download_file(const std::string &url, const std::string &output_path)
     {
+        // 检查缓存
+        {
+            std::lock_guard<std::mutex> lock(cache_mutex);
+            auto it = url_cache.find(url);
+            if (it != url_cache.end())
+            {
+                // 从缓存复制文件
+                std::ifstream src(it->second, std::ios::binary);
+                std::ofstream dst(output_path, std::ios::binary);
+                if (src && dst)
+                {
+                    dst << src.rdbuf();
+                    return true;
+                }
+            }
+        }
+
+        // 创建临时文件名用于缓存
+        std::string temp_path = "/tmp/download_cache_" +
+                                std::to_string(std::hash<std::string>{}(url)) + ".jpg";
+
         CURL *curl = curl_easy_init();
         if (!curl)
         {
@@ -406,10 +557,10 @@ namespace utils
             return false;
         }
 
-        FILE *fp = fopen(output_path.c_str(), "wb");
+        FILE *fp = fopen(temp_path.c_str(), "wb");
         if (!fp)
         {
-            std::cerr << "❌ 无法打开输出文件: " << output_path << std::endl;
+            std::cerr << "❌ 无法打开输出文件: " << temp_path << std::endl;
             curl_easy_cleanup(curl);
             return false;
         }
@@ -418,7 +569,12 @@ namespace utils
         curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, NULL);
         curl_easy_setopt(curl, CURLOPT_WRITEDATA, fp);
         curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
-        curl_easy_setopt(curl, CURLOPT_TIMEOUT, 300L); // 5分钟超时
+        curl_easy_setopt(curl, CURLOPT_TIMEOUT, 60L); // 1分钟超时，比之前更快
+        curl_easy_setopt(curl, CURLOPT_NOPROGRESS, 0L);
+        curl_easy_setopt(curl, CURLOPT_USERAGENT, "Mozilla/5.0");
+
+        // 启用TCP Fast Open
+        curl_easy_setopt(curl, CURLOPT_TCP_FASTOPEN, 1L);
 
         CURLcode res = curl_easy_perform(curl);
 
@@ -428,8 +584,17 @@ namespace utils
         if (res != CURLE_OK)
         {
             std::cerr << "❌ 下载失败: " << curl_easy_strerror(res) << std::endl;
-            std::filesystem::remove(output_path); // 删除部分下载的文件
+            std::filesystem::remove(temp_path); // 删除部分下载的文件
             return false;
+        }
+
+        // 复制到目标位置
+        std::filesystem::copy_file(temp_path, output_path);
+
+        // 添加到缓存
+        {
+            std::lock_guard<std::mutex> lock(cache_mutex);
+            url_cache[url] = temp_path;
         }
 
         return true;

@@ -361,7 +361,18 @@ std::vector<AnalysisTask> ExcelProcessor::create_analysis_tasks(
 
         AnalysisTask task;
         task.id = "task_" + row.content_id;
-        task.media_url = row.url;
+
+        // 处理多个URL的情况，只取第一个
+        // task.media_url = row.url;
+        std::string media_url = row.url;
+        size_t comma_pos = media_url.find(",");
+        if (comma_pos != std::string::npos)
+        {
+            media_url = media_url.substr(0, comma_pos);
+            std::cout << "🔍 [信息] 检测到多个URL，只使用第一个: " << media_url << std::endl;
+        }
+        task.media_url = media_url;
+
         task.prompt = prompt;
         task.max_tokens = max_tokens;
         task.save_to_db = save_to_db;
@@ -661,15 +672,21 @@ std::vector<ExcelRowData> ExcelProcessor::read_media_from_db()
                 media_row.content_id = row[3] ? row[3] : "";
                 // 处理可能包含多个URL的情况，只取第一个
                 std::string url_field = row[4] ? row[4] : "";
-                if (!url_field.empty()) {
+                if (!url_field.empty())
+                {
                     // 查找第一个逗号，如果有多个URL
                     size_t comma_pos = url_field.find(',');
-                    if (comma_pos != std::string::npos) {
+                    if (comma_pos != std::string::npos)
+                    {
                         media_row.url = url_field.substr(0, comma_pos);
-                    } else {
+                    }
+                    else
+                    {
                         media_row.url = url_field;
                     }
-                } else {
+                }
+                else
+                {
                     media_row.url = "";
                 }
                 media_row.tags = row[5] ? row[5] : "";

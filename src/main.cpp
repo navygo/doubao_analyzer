@@ -56,7 +56,9 @@ void print_usage()
 {
     std::cout << "用法: doubao_analyzer [选项]" << std::endl;
     std::cout << "选项:" << std::endl;
-    std::cout << "  --api-key KEY        豆包API密钥 (必需)" << std::endl;
+    std::cout << "  --api-key KEY        API密钥 (必需)" << std::endl;
+    std::cout << "  --base-url URL       API基础URL (可选，默认使用配置文件中的URL)" << std::endl;
+    std::cout << "  --model-name NAME    模型名称 (可选，默认使用配置文件中的模型)" << std::endl;
     std::cout << "  --image PATH         单张图片路径" << std::endl;
     std::cout << "  --video PATH         单个视频路径" << std::endl;
     std::cout << "  --folder PATH        媒体文件夹路径" << std::endl;
@@ -178,7 +180,7 @@ void print_statistics(const std::vector<AnalysisResult> &results)
 void interactive_mode()
 {
     std::string api_key;
-    std::cout << "请输入豆包API密钥: ";
+    std::cout << "请输入API密钥: ";
     std::getline(std::cin, api_key);
 
     if (api_key.empty())
@@ -187,9 +189,32 @@ void interactive_mode()
         return;
     }
 
-    DoubaoMediaAnalyzer analyzer(api_key);
+    std::string use_custom;
+    std::cout << "是否使用自定义API配置? (y/n, 默认n): ";
+    std::getline(std::cin, use_custom);
 
-    if (!analyzer.test_connection())
+    std::unique_ptr<DoubaoMediaAnalyzer> analyzer;
+
+    if (use_custom == "y" || use_custom == "Y")
+    {
+        std::string base_url;
+        std::cout << "请输入API基础URL: ";
+        std::getline(std::cin, base_url);
+
+        std::string model_name;
+        std::cout << "请输入模型名称: ";
+        std::getline(std::cin, model_name);
+
+        analyzer = std::make_unique<DoubaoMediaAnalyzer>(api_key, base_url, model_name);
+        std::cout << "🔧 使用自定义API配置" << std::endl;
+    }
+    else
+    {
+        analyzer = std::make_unique<DoubaoMediaAnalyzer>(api_key);
+        std::cout << "🔧 使用默认API配置" << std::endl;
+    }
+
+    if (!analyzer->test_connection())
     {
         return;
     }
@@ -228,7 +253,7 @@ void interactive_mode()
                     prompt = get_image_prompt();
                 }
 
-                auto result = analyzer.analyze_single_image(image_path, prompt);
+                auto result = analyzer->analyze_single_image(image_path, prompt);
                 print_result(result, "图片");
             }
             else
@@ -262,7 +287,7 @@ void interactive_mode()
                 int num_frames = frames_input.empty() ? 5 : std::stoi(frames_input);
 
                 std::cout << "🎬 开始分析视频..." << std::endl;
-                auto result = analyzer.analyze_single_video(video_path, prompt, 2000, num_frames);
+                auto result = analyzer->analyze_single_video(video_path, prompt, 2000, num_frames);
                 print_result(result, "视频");
             }
             else
@@ -306,7 +331,7 @@ void interactive_mode()
                     prompt = (file_type == "video") ? get_video_prompt() : get_image_prompt();
                 }
 
-                auto results = analyzer.batch_analyze(folder_path, prompt, max_files, file_type);
+                auto results = analyzer->batch_analyze(folder_path, prompt, max_files, file_type);
                 print_statistics(results);
             }
             else
@@ -316,7 +341,7 @@ void interactive_mode()
         }
         else if (choice == "4")
         {
-            analyzer.test_connection();
+            analyzer->test_connection();
         }
         else if (choice == "5")
         {
@@ -341,6 +366,8 @@ int main(int argc, char *argv[])
 
     // 解析命令行参数
     std::string api_key;
+    std::string base_url;   // 新增：API基础URL
+    std::string model_name; // 新增：模型名称
     std::string image_path;
     std::string video_path;
     std::string folder_path;
@@ -366,6 +393,14 @@ int main(int argc, char *argv[])
         else if (arg == "--api-key" && i + 1 < argc)
         {
             api_key = argv[++i];
+        }
+        else if (arg == "--base-url" && i + 1 < argc)
+        {
+            base_url = argv[++i];
+        }
+        else if (arg == "--model-name" && i + 1 < argc)
+        {
+            model_name = argv[++i];
         }
         else if (arg == "--image" && i + 1 < argc)
         {
@@ -425,7 +460,26 @@ int main(int argc, char *argv[])
     }
 
     // 创建分析器
-    DoubaoMediaAnalyzer analyzer(api_key);
+    DoubaoMediaAnalyzer *analyzer_ptr;
+
+    // 根据提供的参数选择适当的构造函数
+    if (!base_url.empty() && !model_name.empty())
+    {
+        // 使用自定义API配置
+        analyzer_ptr = new DoubaoMediaAnalyzer(api_key, base_url, model_name);
+        std::cout << "🔧 使用自定义API配置" << std::endl;
+        std::cout << "   URL: " << base_url << std::endl;
+        std::cout << "   模型: " << model_name << std::endl;
+    }
+    else
+    {
+        // 使用默认配置
+        analyzer_ptr = new DoubaoMediaAnalyzer(api_key);
+        std::cout << "🔧 使用默认API配置" << std::endl;
+    }
+
+    // 使用智能指针管理资源
+    std::unique_ptr<DoubaoMediaAnalyzer> analyzer(analyzer_ptr);
 
     std::cout << "🚀 豆包大模型媒体分析调试工具（支持图片和视频）" << std::endl;
     std::cout << std::string(60, '=') << std::endl;
@@ -437,7 +491,7 @@ int main(int argc, char *argv[])
     if (save_to_db || !query_db.empty() || !query_tag.empty() || show_db_stats)
     {
         std::cout << "🔌 正在初始化数据库连接..." << std::endl;
-        if (!analyzer.initialize_database())
+        if (!analyzer->initialize_database())
         {
             std::cout << "❌ 数据库初始化失败" << std::endl;
             return 1;
@@ -446,7 +500,7 @@ int main(int argc, char *argv[])
     }
 
     // 测试连接
-    if (!analyzer.test_connection())
+    if (!analyzer->test_connection())
     {
         return 1;
     }
@@ -455,7 +509,7 @@ int main(int argc, char *argv[])
     if (!query_db.empty())
     {
         std::cout << "🔍 查询数据库记录: " << query_db << std::endl;
-        auto db_results = analyzer.query_database_results(query_db);
+        auto db_results = analyzer->query_database_results(query_db);
 
         if (db_results.empty())
         {
@@ -480,7 +534,7 @@ int main(int argc, char *argv[])
     if (!query_tag.empty())
     {
         std::cout << "🏷️  按标签查询数据库记录: " << query_tag << std::endl;
-        auto db_results = analyzer.query_by_tag(query_tag);
+        auto db_results = analyzer->query_by_tag(query_tag);
 
         if (db_results.empty())
         {
@@ -505,7 +559,7 @@ int main(int argc, char *argv[])
     if (show_db_stats)
     {
         std::cout << "📊 数据库统计信息:" << std::endl;
-        auto stats = analyzer.get_database_statistics();
+        auto stats = analyzer->get_database_statistics();
 
         if (stats.empty())
         {
@@ -548,7 +602,7 @@ int main(int argc, char *argv[])
     {
         std::cout << "\n📸 分析单张图片: " << image_path << std::endl;
         std::string analysis_prompt = prompt.empty() ? get_image_prompt() : prompt;
-        auto result = analyzer.analyze_single_image(image_path, analysis_prompt);
+        auto result = analyzer->analyze_single_image(image_path, analysis_prompt);
         print_result(result, "图片");
 
         result.raw_response["file"] = std::filesystem::path(image_path).filename().string();
@@ -559,7 +613,7 @@ int main(int argc, char *argv[])
         // 保存到数据库
         if (save_to_db)
         {
-            analyzer.save_result_to_database(result);
+            analyzer->save_result_to_database(result);
         }
     }
 
@@ -568,7 +622,7 @@ int main(int argc, char *argv[])
     {
         std::cout << "\n🎬 分析单个视频: " << video_path << std::endl;
         std::string analysis_prompt = prompt.empty() ? get_video_prompt() : prompt;
-        auto result = analyzer.analyze_single_video(video_path, analysis_prompt, 2000, video_frames);
+        auto result = analyzer->analyze_single_video(video_path, analysis_prompt, 2000, video_frames);
         print_result(result, "视频");
 
         result.raw_response["file"] = std::filesystem::path(video_path).filename().string();
@@ -579,7 +633,7 @@ int main(int argc, char *argv[])
         // 保存到数据库
         if (save_to_db)
         {
-            analyzer.save_result_to_database(result);
+            analyzer->save_result_to_database(result);
         }
     }
 
@@ -589,13 +643,13 @@ int main(int argc, char *argv[])
         std::cout << "\n📁 批量分析文件夹: " << folder_path << " (文件类型: " << file_type << ")" << std::endl;
         std::string analysis_prompt = prompt.empty() ? (file_type == "video" ? get_video_prompt() : get_image_prompt()) : prompt;
 
-        auto batch_results = analyzer.batch_analyze(folder_path, analysis_prompt, max_files, file_type);
+        auto batch_results = analyzer->batch_analyze(folder_path, analysis_prompt, max_files, file_type);
         results.insert(results.end(), batch_results.begin(), batch_results.end());
 
         // 保存到数据库
         if (save_to_db)
         {
-            analyzer.save_batch_results_to_database(results);
+            analyzer->save_batch_results_to_database(results);
         }
     }
 

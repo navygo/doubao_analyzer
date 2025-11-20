@@ -57,6 +57,7 @@ namespace utils {
     // 图像处理
     std::vector<unsigned char> encode_image_to_jpeg(const cv::Mat& image, int quality = 85);
     cv::Mat resize_image(const cv::Mat& image, int max_size = 800);
+    std::string optimize_image_for_ollama(const std::string& base64_data, const std::string& image_url);
     
     // JSON工具
     nlohmann::json parse_json(const std::string& json_str);

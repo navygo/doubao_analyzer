@@ -198,7 +198,8 @@ TaskResult TaskManager::executeTask(const AnalysisTask &task)
                 task.media_url,
                 task.prompt,
                 task.max_tokens,
-                "keyframes"); // 使用关键帧提取方法
+                "keyframes", // 使用关键帧提取方法
+                task.video_frames); // 传递帧数参数
 
             // 如果分析成功，更新结果中的路径为原始URL
             if (result.result.success)
