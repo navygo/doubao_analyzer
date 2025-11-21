@@ -343,7 +343,8 @@ AnalysisResult DoubaoMediaAnalyzer::analyze_video_efficiently(const std::string 
                                                               const std::string &prompt,
                                                               int max_tokens,
                                                               const std::string &method,
-                                                              int num_frames)
+                                                              int num_frames,
+                                                              const std::string &model_name)
 {
     AnalysisResult result;
 

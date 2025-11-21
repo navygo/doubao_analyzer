@@ -66,7 +66,8 @@ public:
                                              const std::string &prompt,
                                              int max_tokens = 2000,
                                              const std::string &method = "keyframes",
-                                             int num_frames = 5);
+                                             int num_frames = 5,
+                                             const std::string &model_name = "");
 
     // 批量分析
     std::vector<AnalysisResult> batch_analyze(const std::string &media_folder,

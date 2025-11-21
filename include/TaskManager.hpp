@@ -23,6 +23,7 @@ struct AnalysisTask
     int max_tokens;                                       // 最大令牌数
     int video_frames;                                     // 视频帧数
     bool save_to_db;                                      // 是否保存到数据库
+    std::string model_name;                               // 大模型名称
     std::string file_id;                                  // Excel文件中的唯一标识符
     std::function<void(const AnalysisResult &)> callback; // 完成回调
 };

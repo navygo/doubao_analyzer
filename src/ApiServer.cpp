@@ -579,7 +579,8 @@ ApiResponse ApiServer::process_request(const std::string &request_json, const st
                 req.max_tokens = req_json.value("max_tokens", 1500);
                 req.video_frames = req_json.value("video_frames", 5);
                 req.save_to_db = req_json.value("save_to_db", true);
-
+                // 添加大模型配置参数 （可选）
+                req.model_name = req_json.value("model_name", "");
                 // 验证媒体类型
                 if (req.media_type != "image" && req.media_type != "video")
                 {
@@ -1124,58 +1125,90 @@ ApiResponse ApiServer::handle_batch_analysis(const std::vector<ApiRequest> &requ
 
     try
     {
-        // 创建任务列表
-        std::vector<AnalysisTask> tasks;
-        tasks.reserve(requests.size());
+        // 分批次处理请求，每批10个
+        const size_t batch_size = 10;
+        size_t total_batches = (requests.size() + batch_size - 1) / batch_size;
 
-        for (size_t i = 0; i < requests.size(); ++i)
+        std::cout << "🔄 [批次处理] 准备分 " << total_batches << " 批次处理 " << requests.size() << " 个请求，每批次最多 " << batch_size << " 个" << std::endl;
+
+        // 用于存储所有任务结果
+        std::vector<TaskResult> all_results;
+
+        // 分批次处理
+        for (size_t i = 0; i < total_batches; ++i)
         {
-            const auto &req = requests[i];
+            size_t start_idx = i * batch_size;
+            size_t end_idx = std::min(start_idx + batch_size, requests.size());
 
-            AnalysisTask task;
-            task.id = "batch_" + std::to_string(i) + "_" + utils::get_current_timestamp();
-            task.media_url = req.media_url;
-            task.media_type = req.media_type;
-            task.prompt = req.prompt.empty() ? (req.media_type == "video" ? get_video_prompt() : get_image_prompt()) : req.prompt;
-            task.max_tokens = req.max_tokens > 0 ? req.max_tokens : config::DEFAULT_MAX_TOKENS;
-            task.video_frames = req.video_frames > 0 ? req.video_frames : config::DEFAULT_VIDEO_FRAMES;
-            task.save_to_db = req.save_to_db;
+            std::cout << "🔍 [批次处理] 正在处理第 " << (i + 1) << "/" << total_batches << " 批次，包含 " << (end_idx - start_idx) << " 个请求" << std::endl;
 
-            tasks.push_back(task);
-        }
+            // 创建当前批次的任务列表
+            std::vector<AnalysisTask> batch_tasks;
+            batch_tasks.reserve(end_idx - start_idx);
 
-        // 添加任务到队列并获取future列表
-        auto futures = TaskManager::getInstance().addTasks(tasks);
-
-        // 等待所有任务完成
-        std::vector<TaskResult> results;
-        results.reserve(futures.size());
-
-        // 创建用于存储分析结果的向量
-        std::vector<AnalysisResult> results_db;
-        results_db.reserve(futures.size());
-
-        for (auto &future : futures)
-        {
-            TaskResult taskResult = future.get();
-            results.push_back(taskResult);
-
-            // 将分析结果添加到results_db
-            if (taskResult.success)
+            for (size_t j = start_idx; j < end_idx; ++j)
             {
-                results_db.push_back(taskResult.result);
+                const auto &req = requests[j];
+
+                AnalysisTask task;
+                task.id = "batch_" + std::to_string(j) + "_" + utils::get_current_timestamp();
+                task.media_url = req.media_url;
+                task.media_type = req.media_type;
+                // 大模型
+                task.model_name = req.model_name;
+                //
+                task.prompt = req.prompt.empty() ? (req.media_type == "video" ? get_video_prompt() : get_image_prompt()) : req.prompt;
+                task.max_tokens = req.max_tokens > 0 ? req.max_tokens : config::DEFAULT_MAX_TOKENS;
+                task.video_frames = req.video_frames > 0 ? req.video_frames : config::DEFAULT_VIDEO_FRAMES;
+                task.save_to_db = req.save_to_db;
+
+                batch_tasks.push_back(task);
             }
+
+            // 添加当前批次任务到队列并获取future列表
+            auto futures = TaskManager::getInstance().addTasks(batch_tasks);
+
+            // 用于存储当前批次的结果
+            std::vector<AnalysisResult> batch_results;
+
+            // 等待当前批次的所有任务完成
+            for (auto &future : futures)
+            {
+                TaskResult taskResult = future.get();
+                all_results.push_back(taskResult);
+
+                // 将成功的分析结果添加到当前批次结果
+                if (taskResult.success)
+                {
+                    batch_results.push_back(taskResult.result);
+                }
+            }
+
+            // 直接保存当前批次的结果到数据库
+            if (!batch_results.empty())
+            {
+                std::cout << "💾 [数据库保存] 正在保存第 " << (i + 1) << "/" << total_batches << " 批次结果，包含 " << batch_results.size() << " 条记录" << std::endl;
+
+                if (!save_batch_to_database(batch_results))
+                {
+                    std::cerr << "❌ [数据库保存] 第 " << (i + 1) << " 批次保存失败" << std::endl;
+                }
+                else
+                {
+                    std::cout << "✅ [数据库保存] 第 " << (i + 1) << " 批次保存成功" << std::endl;
+                }
+            }
+
+            std::cout << "✅ [批次处理] 第 " << (i + 1) << " 批次处理完成" << std::endl;
         }
 
-        // 批量请求返回结果保存到数据库
-
-        save_batch_to_database(results_db);
+        std::cout << "🎉 [批次处理] 所有批次处理完成，共处理 " << all_results.size() << " 个任务" << std::endl;
 
         // 构建响应数据
         nlohmann::json results_array = nlohmann::json::array();
         int success_count = 0;
 
-        for (const auto &result : results)
+        for (const auto &result : all_results)
         {
             nlohmann::json result_obj;
             result_obj["task_id"] = result.task_id;
@@ -1268,63 +1301,92 @@ ApiResponse ApiServer::handle_db_media_analysis(const std::string &prompt, int m
             return response;
         }
 
+        std::cout << "📊 [数据库媒体分析] 从数据库读取到 " << media_data.size() << " 条媒体数据" << std::endl;
+
         // 创建分析任务
         std::string analysis_prompt = prompt.empty() ? get_image_prompt() : prompt;
         int tokens = max_tokens > 0 ? max_tokens : config::DEFAULT_MAX_TOKENS;
 
-        auto tasks = processor.create_analysis_tasks(media_data, analysis_prompt, tokens, save_to_db);
-        if (tasks.empty())
+        // 分批次处理数据，每批10条
+        const size_t batch_size = 10;
+        size_t total_batches = (media_data.size() + batch_size - 1) / batch_size;
+
+        std::cout << "🔄 [批次处理] 准备分 " << total_batches << " 批次处理数据，每批次最多 " << batch_size << " 条" << std::endl;
+
+        // 用于存储所有任务结果
+        std::vector<TaskResult> all_results;
+
+        // 分批次处理
+        for (size_t i = 0; i < total_batches; ++i)
         {
-            response.success = false;
-            response.message = "没有有效的分析任务";
-            response.error = "No valid analysis tasks";
-            return response;
-        }
+            size_t start_idx = i * batch_size;
+            size_t end_idx = std::min(start_idx + batch_size, media_data.size());
 
-        // 添加任务到队列并获取future列表
-        auto futures = TaskManager::getInstance().addTasks(tasks);
+            std::vector<ExcelRowData> batch_data(media_data.begin() + start_idx, media_data.begin() + end_idx);
 
-        // 等待所有任务完成
-        std::vector<TaskResult> results;
-        results.reserve(futures.size());
+            std::cout << "🔍 [批次处理] 正在处理第 " << (i + 1) << "/" << total_batches << " 批次，包含 " << batch_data.size() << " 条数据" << std::endl;
 
-        // 创建用于存储分析结果的向量
-        std::vector<AnalysisResult> results_db;
-        results_db.reserve(futures.size());
-
-        // 等待所有任务完成
-        for (auto &future : futures)
-        {
-            TaskResult result = future.get();
-            results.push_back(result);
-
-            // 将分析结果添加到results_db
-            if (result.success)
+            // 为当前批次创建分析任务
+            auto tasks = processor.create_analysis_tasks(batch_data, analysis_prompt, tokens, save_to_db);
+            if (tasks.empty())
             {
-                results_db.push_back(result.result);
+                std::cout << "⚠️ [批次处理] 第 " << (i + 1) << " 批次没有有效的分析任务，跳过" << std::endl;
+                continue;
             }
+
+            // 添加任务到队列并获取future列表
+            auto futures = TaskManager::getInstance().addTasks(tasks);
+
+            // 用于存储当前批次的结果
+            std::vector<AnalysisResult> batch_results;
+
+            // 等待当前批次的所有任务完成
+            for (auto &future : futures)
+            {
+                TaskResult result = future.get();
+                all_results.push_back(result);
+
+                // 将成功的分析结果添加到当前批次结果
+                if (result.success)
+                {
+                    batch_results.push_back(result.result);
+                }
+            }
+
+            // 直接保存当前批次的结果到数据库
+            if (save_to_db && !batch_results.empty())
+            {
+                std::cout << "💾 [数据库保存] 正在保存第 " << (i + 1) << "/" << total_batches << " 批次结果，包含 " << batch_results.size() << " 条记录" << std::endl;
+
+                if (!save_batch_to_database(batch_results))
+                {
+                    std::cerr << "❌ [数据库保存] 第 " << (i + 1) << " 批次保存失败" << std::endl;
+                }
+                else
+                {
+                    std::cout << "✅ [数据库保存] 第 " << (i + 1) << " 批次保存成功" << std::endl;
+                }
+            }
+
+            std::cout << "✅ [批次处理] 第 " << (i + 1) << " 批次处理完成" << std::endl;
         }
 
-        // 批量请求返回结果保存到数据库
-        if (save_to_db)
-        {
-            save_batch_to_database(results_db);
-        }
+        std::cout << "🎉 [批次处理] 所有批次处理完成，共处理 " << all_results.size() << " 个任务" << std::endl;
 
         // 准备响应
         response.success = true;
-        response.message = "数据库媒体处理完成，共分析 " + std::to_string(results.size()) + " 个媒体文件";
-        response.data["total_tasks"] = results.size();
-        response.data["successful_tasks"] = std::count_if(results.begin(), results.end(),
+        response.message = "数据库媒体处理完成，共分析 " + std::to_string(all_results.size()) + " 个媒体文件";
+        response.data["total_tasks"] = all_results.size();
+        response.data["successful_tasks"] = std::count_if(all_results.begin(), all_results.end(),
                                                           [](const TaskResult &r)
                                                           { return r.success; });
-        response.data["failed_tasks"] = std::count_if(results.begin(), results.end(),
+        response.data["failed_tasks"] = std::count_if(all_results.begin(), all_results.end(),
                                                       [](const TaskResult &r)
                                                       { return !r.success; });
 
         // 添加详细结果
         nlohmann::json results_json = nlohmann::json::array();
-        for (const auto &result : results)
+        for (const auto &result : all_results)
         {
             nlohmann::json result_json;
             result_json["task_id"] = result.task_id;
