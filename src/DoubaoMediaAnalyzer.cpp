@@ -209,7 +209,8 @@ bool DoubaoMediaAnalyzer::test_connection()
 
 AnalysisResult DoubaoMediaAnalyzer::analyze_single_image(const std::string &image_path,
                                                          const std::string &prompt,
-                                                         int max_tokens)
+                                                         int max_tokens,
+                                                         const std::string &model_name)
 {
     AnalysisResult result;
 
@@ -223,9 +224,15 @@ AnalysisResult DoubaoMediaAnalyzer::analyze_single_image(const std::string &imag
         }
 
         std::string image_data = utils::base64_encode_file(image_path);
-
+        // 按传递模型名称（如果有）或默认模型名称构建请求
+        std::string original_model_name = model_name_;
+        if (!model_name.empty())
+        {
+            original_model_name = model_name;
+        }
+        //
         nlohmann::json payload = {
-            {"model", model_name_},
+            {"model", original_model_name},
             {"messages", {{{"role", "user"}, {"content", {{{"type", "image_url"}, {"image_url", {{"url", "data:image/jpeg;base64," + image_data}}}}, {{"type", "text"}, {"text", prompt}}}}}}},
             {"max_tokens", max_tokens},
             {"temperature", config::DEFAULT_TEMPERATURE},
@@ -247,7 +254,8 @@ AnalysisResult DoubaoMediaAnalyzer::analyze_single_image(const std::string &imag
 AnalysisResult DoubaoMediaAnalyzer::analyze_single_video(const std::string &video_path,
                                                          const std::string &prompt,
                                                          int max_tokens,
-                                                         int num_frames)
+                                                         int num_frames,
+                                                         const std::string &model_name)
 {
     AnalysisResult result;
 
@@ -291,9 +299,15 @@ AnalysisResult DoubaoMediaAnalyzer::analyze_single_video(const std::string &vide
             content.push_back({{"type", "text"},
                                {"text", "这是视频的第" + std::to_string(i + 1) + "个关键帧"}});
         }
-
+        // 按传递模型名称（如果有）或默认模型名称构建请求
+        std::string original_model_name = model_name_;
+        if (!model_name.empty())
+        {
+            original_model_name = model_name;
+        }
+        //
         nlohmann::json payload = {
-            {"model", model_name_},
+            {"model", original_model_name},
             {"messages", {{{"role", "user"}, {"content", content}}}},
             {"max_tokens", max_tokens},
             {"temperature", config::DEFAULT_TEMPERATURE},

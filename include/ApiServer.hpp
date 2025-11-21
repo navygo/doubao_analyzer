@@ -17,6 +17,9 @@ struct ApiRequest
     int max_tokens;         // 可选的最大令牌数
     int video_frames;       // 可选的视频帧数（仅视频分析）
     bool save_to_db;        // 是否保存结果到数据库
+
+    // 大模型配置参数 如果Ollama本地部署模型 可以选择模型
+    std::string model_name; // 大模型名称
 };
 
 // API查询请求结构

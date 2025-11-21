@@ -458,6 +458,9 @@ ApiResponse ApiServer::process_request(const std::string &request_json, const st
             request.video_frames = request_data.value("video_frames", 5);
             request.save_to_db = request_data.value("save_to_db", true);
 
+            // 添加大模型配置参数 （可选）
+            request.model_name = request_data.value("model_name", "");
+
             // 验证媒体类型
             if (request.media_type != "image" && request.media_type != "video")
             {

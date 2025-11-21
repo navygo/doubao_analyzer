@@ -51,13 +51,15 @@ public:
     // 单张图片分析
     AnalysisResult analyze_single_image(const std::string &image_path,
                                         const std::string &prompt,
-                                        int max_tokens = 1500);
+                                        int max_tokens = 1500,
+                                        const std::string &model_name = "");
 
     // 单个视频分析
     AnalysisResult analyze_single_video(const std::string &video_path,
                                         const std::string &prompt,
                                         int max_tokens = 2000,
-                                        int num_frames = 5);
+                                        int num_frames = 5,
+                                        const std::string &model_name = "");
 
     // 高效视频分析（使用关键帧，无需完整下载）
     AnalysisResult analyze_video_efficiently(const std::string &video_url,
