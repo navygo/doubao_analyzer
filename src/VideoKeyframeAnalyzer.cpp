@@ -235,10 +235,10 @@ std::vector<std::string> VideoKeyframeAnalyzer::extract_keyframes(const std::str
             }
         }
 
-        // 如果关键帧数量不足，使用采样方法补充 最多5帧,避免出现大量帧 导致数据量过大
-        max_frames = 5;
+        // 如果关键帧数量为0 ,避免出现无结果，使用采样方法补充到5帧
+        max_frames = 3;
         //
-        if (frames_base64.size() < static_cast<size_t>(max_frames))
+        if (frames_base64.size() == 0)
         {
             std::cout << "关键帧数量不足(" << frames_base64.size() << ")，使用采样方法补充到" << max_frames << "帧" << std::endl;
 
