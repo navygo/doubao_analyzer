@@ -39,11 +39,14 @@ std::string get_video_prompta()
 
 std::string get_image_prompt()
 {
-    return R"(请为图片生成简洁的三级分类标签。要求：
-1. 一级标签：最概括的主类别
-2. 二级标签：更具体的子类别
-3. 三级标签：最精准的描述
-4. 输出格式：['一级', '二级', '三级'])";
+    return R"(请仔细观察图片内容，为图片生成合适的标签。要求：
+1. 仔细观察图片的各个细节
+2. 生成的标签要准确反映图片的主题、场景、动作等
+3. 请严格按照以下三级标签体系对进行分类：
+ 一级标签：选择最概括的主类别。
+ 二级标签：在一级标签下选择更具体的子类别。
+ 三级标签：在二级标签下选择最精准的描述性标签
+4. 输出格式：通过分析，生成的标签为：['一级标签', '二级标签', '三级标签'])";
 }
 
 std::string get_video_prompt()
@@ -55,7 +58,7 @@ std::string get_video_prompt()
  一级标签：选择最概括的主类别。
  二级标签：在一级标签下选择更具体的子类别。
  三级标签：在二级标签下选择最精准的描述性标签
-4. 输出格式：通过分析视频，生成的标签为：['一级标签', '二级标签', '三级标签'])";
+4. 输出格式：通过分析，生成的标签为：['一级标签', '二级标签', '三级标签'])";
 }
 
 ApiServer::ApiServer(const std::string &api_key, int port, const std::string &host)
@@ -84,11 +87,11 @@ bool ApiServer::initialize()
     }
 
     // 测试API连接
-    if (!analyzer_->test_connection())
-    {
-        std::cerr << "❌ API连接测试失败" << std::endl;
-        return false;
-    }
+    // if (!analyzer_->test_connection())
+    // {
+    //     std::cerr << "❌ API连接测试失败" << std::endl;
+    //     return false;
+    // }
 
     // 初始化数据库
     if (!analyzer_->initialize_database())
@@ -640,7 +643,8 @@ ApiResponse ApiServer::handle_image_analysis(const ApiRequest &request)
         AnalysisResult result = analyzer_->analyze_single_image(
             temp_file,
             prompt,
-            request.max_tokens);
+            request.max_tokens,
+            request.model_name);
 
         // 清理临时文件
         std::filesystem::remove(temp_file);
@@ -717,8 +721,9 @@ ApiResponse ApiServer::handle_video_analysis(const ApiRequest &request)
             request.media_url,
             prompt,
             request.max_tokens,
-            "keyframes",           // 使用关键帧提取方法
-            request.video_frames); // 传递请求的帧数
+            "keyframes",          // 使用关键帧提取方法
+            request.video_frames, // 传递请求的帧数
+            request.model_name);
 
         double analysis_time = utils::get_current_time() - analysis_start_time;
         timing_info["analysis_seconds"] = analysis_time;

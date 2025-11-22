@@ -223,24 +223,41 @@ AnalysisResult DoubaoMediaAnalyzer::analyze_single_image(const std::string &imag
             return result;
         }
 
+        // 记录图片编码开始时间
+        double encode_start = utils::get_current_time();
+        std::cout << "⏰ [性能] 开始编码图片: " << image_path << std::endl;
         std::string image_data = utils::base64_encode_file(image_path);
+        double encode_end = utils::get_current_time();
+        double encode_time = encode_end - encode_start;
+        std::cout << "⏰ [性能] 图片编码完成，耗时: " << encode_time << " 秒" << std::endl;
+        std::cout << "⏰ [性能] 编码后大小: " << image_data.size() << " 字节" << std::endl;
+
         // 按传递模型名称（如果有）或默认模型名称构建请求
         std::string original_model_name = model_name_;
         if (!model_name.empty())
         {
             original_model_name = model_name;
         }
-        //
+
+        // 记录载荷构建开始时间
+        double payload_start = utils::get_current_time();
         nlohmann::json payload = {
             {"model", original_model_name},
             {"messages", {{{"role", "user"}, {"content", {{{"type", "image_url"}, {"image_url", {{"url", "data:image/jpeg;base64," + image_data}}}}, {{"type", "text"}, {"text", prompt}}}}}}},
             {"max_tokens", max_tokens},
             {"temperature", config::DEFAULT_TEMPERATURE},
             {"stream", false}};
+        double payload_end = utils::get_current_time();
+        double payload_time = payload_end - payload_start;
+        std::cout << "⏰ [性能] 载荷构建完成，耗时: " << payload_time << " 秒" << std::endl;
 
-        double start_time = utils::get_current_time();
+        // 记录API请求开始时间
+        double request_start = utils::get_current_time();
+        std::cout << "⏰ [性能] 开始发送API请求，使用模型: " << original_model_name << std::endl;
         result = send_analysis_request(payload, config::IMAGE_ANALYSIS_TIMEOUT);
-        result.response_time = utils::get_current_time() - start_time;
+        double request_end = utils::get_current_time();
+        result.response_time = request_end - request_start;
+        std::cout << "⏰ [性能] API请求完成，总耗时: " << result.response_time << " 秒" << std::endl;
     }
     catch (const std::exception &e)
     {
@@ -866,15 +883,34 @@ AnalysisResult DoubaoMediaAnalyzer::send_analysis_request(const nlohmann::json &
 
         std::string payload_str = adjusted_payload.dump();
         std::cout << "🔍 [调试] Ollama API请求URL: " << base_url_ << std::endl;
-        // std::cout << "🔍 [调试] Ollama API请求数据: " << payload_str << std::endl;
+        std::cout << "⏰ [性能] 准备发送API请求，载荷大小: " << payload_str.size() << " 字节" << std::endl;
+
         bool enable_http2 = true; // 根据需要启用HTTP/2
         if (use_ollama_)          // 先假设所有请求都不是Ollama API，便于调试
         {
             enable_http2 = false; // Ollama API不支持HTTP/2
         }
+
+        // 记录请求开始时间
+        double request_start = utils::get_current_time();
+        std::cout << "⏰ [性能] 开始发送HTTP请求，超时设置: " << timeout << " 秒" << std::endl;
+
         std::string response = make_http_request(base_url_, "POST", payload_str, headers, timeout, enable_http2);
-        //
-        return process_response(response, 0); // response_time will be set by caller
+
+        // 记录请求结束时间
+        double request_end = utils::get_current_time();
+        double request_time = request_end - request_start;
+        std::cout << "⏰ [性能] HTTP请求完成，耗时: " << request_time << " 秒" << std::endl;
+        std::cout << "⏰ [性能] 响应大小: " << response.size() << " 字节" << std::endl;
+
+        // 记录响应处理开始时间
+        double process_start = utils::get_current_time();
+        auto result = process_response(response, 0); // response_time will be set by caller
+        double process_end = utils::get_current_time();
+        double process_time = process_end - process_start;
+        std::cout << "⏰ [性能] 响应处理完成，耗时: " << process_time << " 秒" << std::endl;
+
+        return result;
     }
     catch (const std::exception &e)
     {
@@ -1007,6 +1043,11 @@ std::string DoubaoMediaAnalyzer::make_http_request(const std::string &url,
         curl_easy_setopt(shared_curl, CURLOPT_TCP_KEEPIDLE, 60L);
         curl_easy_setopt(shared_curl, CURLOPT_TCP_KEEPINTVL, 30L);
         curl_easy_setopt(shared_curl, CURLOPT_FORBID_REUSE, 0L);
+
+        // 添加更多性能优化选项
+        curl_easy_setopt(shared_curl, CURLOPT_NOSIGNAL, 1L);        // 避免信号中断
+        curl_easy_setopt(shared_curl, CURLOPT_TCP_NODELAY, 1L);     // 禁用Nagle算法，减少延迟
+        curl_easy_setopt(shared_curl, CURLOPT_BUFFERSIZE, 102400L); // 增大缓冲区大小到100KB
     }
 
     std::string response;
@@ -1027,11 +1068,11 @@ std::string DoubaoMediaAnalyzer::make_http_request(const std::string &url,
     {
         curl_easy_setopt(shared_curl, CURLOPT_HTTP_VERSION, CURL_HTTP_VERSION_2_PRIOR_KNOWLEDGE);
     }
-    else
-    {
-        // 如果不支持HTTP/2，使用HTTP/1.1
-        curl_easy_setopt(shared_curl, CURLOPT_HTTP_VERSION, CURL_HTTP_VERSION_1_1);
-    }
+    // else
+    // {
+    //     // 如果不支持HTTP/2，使用HTTP/1.1
+    //     curl_easy_setopt(shared_curl, CURLOPT_HTTP_VERSION, CURL_HTTP_VERSION_1_1);
+    // }
     // 压缩
     curl_easy_setopt(shared_curl, CURLOPT_ACCEPT_ENCODING, "gzip, deflate");
 
@@ -1044,7 +1085,33 @@ std::string DoubaoMediaAnalyzer::make_http_request(const std::string &url,
     curl_easy_setopt(shared_curl, CURLOPT_HTTPHEADER, header_list);
 
     // 执行请求
+    double perform_start = utils::get_current_time();
     CURLcode res = curl_easy_perform(shared_curl);
+    double perform_end = utils::get_current_time();
+    double perform_time = perform_end - perform_start;
+
+    // 获取请求统计信息
+    double total_time;
+    double namelookup_time;
+    double connect_time;
+    double appconnect_time;
+    double pretransfer_time;
+    double starttransfer_time;
+
+    curl_easy_getinfo(shared_curl, CURLINFO_TOTAL_TIME, &total_time);
+    curl_easy_getinfo(shared_curl, CURLINFO_NAMELOOKUP_TIME, &namelookup_time);
+    curl_easy_getinfo(shared_curl, CURLINFO_CONNECT_TIME, &connect_time);
+    curl_easy_getinfo(shared_curl, CURLINFO_APPCONNECT_TIME, &appconnect_time);
+    curl_easy_getinfo(shared_curl, CURLINFO_PRETRANSFER_TIME, &pretransfer_time);
+    curl_easy_getinfo(shared_curl, CURLINFO_STARTTRANSFER_TIME, &starttransfer_time);
+
+    std::cout << "⏰ [性能] CURL执行完成，耗时: " << perform_time << " 秒" << std::endl;
+    std::cout << "⏰ [性能] DNS解析: " << namelookup_time << " 秒" << std::endl;
+    std::cout << "⏰ [性能] 建立连接: " << connect_time << " 秒" << std::endl;
+    std::cout << "⏰ [性能] SSL握手: " << appconnect_time << " 秒" << std::endl;
+    std::cout << "⏰ [性能] 传输准备: " << pretransfer_time << " 秒" << std::endl;
+    std::cout << "⏰ [性能] 首字节响应: " << starttransfer_time << " 秒" << std::endl;
+    std::cout << "⏰ [性能] 总耗时: " << total_time << " 秒" << std::endl;
 
     curl_slist_free_all(header_list);
 

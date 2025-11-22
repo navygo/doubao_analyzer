@@ -193,65 +193,103 @@ namespace utils
 
     std::string base64_encode_file(const std::string &file_path)
     {
+        double start_time = get_current_time();
         std::ifstream file(file_path, std::ios::binary);
         if (!file)
         {
             throw std::runtime_error("Cannot open file: " + file_path);
         }
 
-        // 读取文件到缓冲区
-        std::vector<unsigned char> buffer(std::istreambuf_iterator<char>(file), {});
+        // 优化：直接获取文件大小，避免读取整个文件到内存
+        file.seekg(0, std::ios::end);
+        size_t file_size = file.tellg();
+        file.seekg(0, std::ios::beg);
+
+        double file_info_time = get_current_time();
+        std::cout << "⏰ [性能] 文件信息获取完成，耗时: " << (file_info_time - start_time) << " 秒" << std::endl;
+        std::cout << "⏰ [性能] 原始文件大小: " << file_size << " 字节" << std::endl;
 
         // 如果图片过大，先进行压缩
-        if (buffer.size() > 1024 * 1024) // 如果大于1MB
+        if (file_size > 512 * 1024) // 降低阈值到512KB
         {
+            std::cout << "⏰ [性能] 文件过大，开始压缩处理..." << std::endl;
+            double compress_start = get_current_time();
+
             // 使用OpenCV读取并压缩图片
             cv::Mat img = cv::imread(file_path);
             if (!img.empty())
             {
-                // 调整图片尺寸，使用更适合分类的小尺寸
-                // 对于三级分类任务，小尺寸更高效且准确
-                int max_size = 512; // 减小到512像素，适合分类任务
+                double load_time = get_current_time();
+                std::cout << "⏰ [性能] 图片加载完成，耗时: " << (load_time - compress_start) << " 秒" << std::endl;
+                std::cout << "⏰ [性能] 图片尺寸: " << img.cols << "x" << img.rows << std::endl;
 
-                // 如果图片非常大，先进行中等缩放
-                if (img.cols > 2048 || img.rows > 2048)
-                {
-                    double scale = 2048.0 / std::max(img.cols, img.rows);
-                    cv::Mat temp;
-                    cv::resize(img, temp, cv::Size(), scale, scale);
-                    img = temp;
-                }
+                // 进一步减小图片尺寸，提高处理速度
+                int max_size = 384; // 降低到384像素，提高处理速度
 
-                // 最终调整到目标尺寸
+                // 直接调整到目标尺寸，减少中间步骤
                 if (img.cols > max_size || img.rows > max_size)
                 {
+                    double resize_start = get_current_time();
                     double scale = max_size / (double)std::max(img.cols, img.rows);
                     cv::Mat resized;
-                    // 使用INTER_AREA插值，适合缩小图片
-                    cv::resize(img, resized, cv::Size(max_size, max_size * img.rows / img.cols), 0, 0, cv::INTER_AREA);
+                    // 使用INTER_LINEAR插值，比INTER_AREA更快
+                    cv::resize(img, resized, cv::Size(), scale, scale, cv::INTER_LINEAR);
                     img = resized;
+                    double resize_end = get_current_time();
+                    std::cout << "⏰ [性能] 图片缩放完成，耗时: " << (resize_end - resize_start) << " 秒" << std::endl;
                 }
 
-                // 压缩图片质量为75%，进一步减小文件大小  可以优化的地方 压缩图片质量比率可调整
+                // 降低图片质量，减小文件大小
+                double encode_start = get_current_time();
                 std::vector<uchar> jpeg_data;
-                std::vector<int> params = {cv::IMWRITE_JPEG_QUALITY, 75, cv::IMWRITE_JPEG_OPTIMIZE, 1};
+                std::vector<int> params = {cv::IMWRITE_JPEG_QUALITY, 65, cv::IMWRITE_JPEG_OPTIMIZE, 1};
                 cv::imencode(".jpg", img, jpeg_data, params);
+                double encode_end = get_current_time();
+                std::cout << "⏰ [性能] 图片编码完成，耗时: " << (encode_end - encode_start) << " 秒" << std::endl;
+                std::cout << "⏰ [性能] 压缩后大小: " << jpeg_data.size() << " 字节" << std::endl;
 
-                // 如果压缩后仍然较大，进一步降低质量 可以优化的地方 jpeg_data.size() > 100 * 1024
-                if (jpeg_data.size() > 200 * 1024) // 如果大于200KB
+                // 如果压缩后仍然较大，进一步降低质量
+                if (jpeg_data.size() > 150 * 1024) // 降低阈值到150KB
                 {
-                    params = {cv::IMWRITE_JPEG_QUALITY, 60, cv::IMWRITE_JPEG_OPTIMIZE, 1};
+                    std::cout << "⏰ [性能] 文件仍然过大，进行二次压缩..." << std::endl;
+                    double reencode_start = get_current_time();
+                    params = {cv::IMWRITE_JPEG_QUALITY, 50, cv::IMWRITE_JPEG_OPTIMIZE, 1};
                     jpeg_data.clear();
                     cv::imencode(".jpg", img, jpeg_data, params);
+                    double reencode_end = get_current_time();
+                    std::cout << "⏰ [性能] 二次压缩完成，耗时: " << (reencode_end - reencode_start) << " 秒" << std::endl;
+                    std::cout << "⏰ [性能] 二次压缩后大小: " << jpeg_data.size() << " 字节" << std::endl;
                 }
 
-                // 使用压缩后的数据
-                return base64_encode(jpeg_data);
+                double b64_start = get_current_time();
+                std::string result = base64_encode(jpeg_data);
+                double b64_end = get_current_time();
+                std::cout << "⏰ [性能] Base64编码完成，耗时: " << (b64_end - b64_start) << " 秒" << std::endl;
+
+                double total_time = get_current_time() - start_time;
+                std::cout << "⏰ [性能] 图片处理总耗时: " << total_time << " 秒" << std::endl;
+
+                return result;
             }
         }
 
-        // 小图片直接编码
-        return base64_encode(buffer);
+        // 小图片直接读取和编码
+        std::cout << "⏰ [性能] 文件较小，直接处理..." << std::endl;
+        double read_start = get_current_time();
+        std::vector<unsigned char> buffer(file_size);
+        file.read(reinterpret_cast<char*>(buffer.data()), file_size);
+        double read_end = get_current_time();
+        std::cout << "⏰ [性能] 文件读取完成，耗时: " << (read_end - read_start) << " 秒" << std::endl;
+
+        double b64_start = get_current_time();
+        std::string result = base64_encode(buffer);
+        double b64_end = get_current_time();
+        std::cout << "⏰ [性能] Base64编码完成，耗时: " << (b64_end - b64_start) << " 秒" << std::endl;
+
+        double total_time = get_current_time() - start_time;
+        std::cout << "⏰ [性能] 图片处理总耗时: " << total_time << " 秒" << std::endl;
+
+        return result;
     }
 
     std::vector<unsigned char> base64_decode(const std::string &encoded_string)
@@ -368,7 +406,7 @@ namespace utils
             }
 
             // 调整图像大小以减少数据量
-            int max_dimension = 1024; // Ollama适合的最大尺寸
+            int max_dimension = 512; // 从1024降低到512，显著减少数据量
 
             // 如果图像太大，进行缩放
             if (image.cols > max_dimension || image.rows > max_dimension) 
@@ -379,7 +417,7 @@ namespace utils
                 );
 
                 cv::Mat resized_image;
-                cv::resize(image, resized_image, cv::Size(), scale, scale, cv::INTER_AREA);
+                cv::resize(image, resized_image, cv::Size(), scale, scale, cv::INTER_LINEAR);
                 image = resized_image;
             }
 
@@ -395,12 +433,12 @@ namespace utils
             } 
             else 
             {
-                // JPEG压缩参数
-                params = {cv::IMWRITE_JPEG_QUALITY, 85, cv::IMWRITE_JPEG_OPTIMIZE, 1};
+                // JPEG压缩参数 - 降低质量以减小文件大小
+                params = {cv::IMWRITE_JPEG_QUALITY, 60, cv::IMWRITE_JPEG_OPTIMIZE, 1};
                 cv::imencode(output_format, image, optimized_data, params);
 
                 // 如果JPEG仍然太大，进一步降低质量
-                if (optimized_data.size() > 300 * 1024) // 300KB
+                if (optimized_data.size() > 150 * 1024) // 降低阈值到150KB
                 {
                     params = {cv::IMWRITE_JPEG_QUALITY, 70, cv::IMWRITE_JPEG_OPTIMIZE, 1};
                     optimized_data.clear();

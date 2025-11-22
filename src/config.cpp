@@ -10,7 +10,7 @@ namespace config
 
     // 默认使用本地Ollama API
     const std::string BASE_URL = "http://127.0.0.1:11434/api/generate";
-    const std::string MODEL_NAME = "qwen3-vl:2b"; // qwen3-vl:235b-cloud
+    const std::string MODEL_NAME = "qwen3-vl:8b"; // qwen3-vl:235b-cloud
     const std::string API_KEY = "";               // 默认空值，Ollama通常不需要API密钥
 
     // 默认值
