@@ -941,6 +941,30 @@ AnalysisResult DoubaoMediaAnalyzer::send_analysis_request(const nlohmann::json &
             {
                 adjusted_payload.erase("stream");
             }
+            
+            // 确保model字段存在
+            if (!adjusted_payload.contains("model") || adjusted_payload["model"].empty())
+            {
+                adjusted_payload["model"] = model_name_;
+            }
+            
+            // 验证messages字段格式
+            if (adjusted_payload.contains("messages"))
+            {
+                if (!adjusted_payload["messages"].is_array() || adjusted_payload["messages"].empty())
+                {
+                    throw std::runtime_error("vLLM API请求格式错误: messages必须是非空数组");
+                }
+                
+                // 检查每个message是否有role和content
+                for (const auto& msg : adjusted_payload["messages"])
+                {
+                    if (!msg.contains("role") || !msg.contains("content"))
+                    {
+                        throw std::runtime_error("vLLM API请求格式错误: 每个消息必须包含role和content字段");
+                    }
+                }
+            }
         }
         else
         {
@@ -966,7 +990,53 @@ AnalysisResult DoubaoMediaAnalyzer::send_analysis_request(const nlohmann::json &
         double request_start = utils::get_current_time();
         std::cout << "⏰ [性能] 开始发送HTTP请求，超时设置: " << timeout << " 秒" << std::endl;
 
-        std::string response = make_http_request(base_url_, "POST", payload_str, headers, timeout, enable_http2);
+        std::string response;
+        try 
+        {
+            response = make_http_request(base_url_, "POST", payload_str, headers, timeout, enable_http2);
+            
+            // 检查响应是否为空
+            if (response.empty())
+            {
+                throw std::runtime_error("服务器返回空响应");
+            }
+        }
+        catch (const std::exception& e)
+        {
+            std::string api_type = "豆包";
+            if (use_ollama_)
+            {
+                api_type = "Ollama";
+            }
+            else if (use_vllm_)
+            {
+                api_type = "vLLM";
+            }
+            
+            std::string error_msg = api_type + " 请求失败: " + std::string(e.what());
+            
+            // 为vLLM添加更详细的错误信息
+            if (use_vllm_)
+            {
+                error_msg += " (URL: " + base_url_ + ", Model: " + model_name_ + ", Timeout: " + std::to_string(timeout) + "s)";
+                
+                // 检查是否是连接超时
+                if (std::string(e.what()).find("timeout") != std::string::npos || 
+                    std::string(e.what()).find("timed out") != std::string::npos)
+                {
+                    error_msg += " - 建议检查vLLM服务是否运行正常，或增加超时时间";
+                }
+                
+                // 检查是否是连接被拒绝
+                if (std::string(e.what()).find("Connection refused") != std::string::npos ||
+                    std::string(e.what()).find("Failed to connect") != std::string::npos)
+                {
+                    error_msg += " - 建议检查vLLM服务地址和端口是否正确";
+                }
+            }
+            
+            throw std::runtime_error(error_msg);
+        }
 
         // 记录请求结束时间
         double request_end = utils::get_current_time();
@@ -986,7 +1056,24 @@ AnalysisResult DoubaoMediaAnalyzer::send_analysis_request(const nlohmann::json &
     catch (const std::exception &e)
     {
         result.success = false;
-        result.error = "HTTP请求异常: " + std::string(e.what());
+        std::string api_type = "豆包";
+        if (use_ollama_)
+        {
+            api_type = "Ollama";
+        }
+        else if (use_vllm_)
+        {
+            api_type = "vLLM";
+        }
+        
+        result.error = api_type + " HTTP请求异常: " + std::string(e.what());
+        
+        // 添加额外的调试信息
+        if (use_vllm_)
+        {
+            result.error += " (URL: " + base_url_ + ", Model: " + model_name_ + ")";
+        }
+        
         return result;
     }
 }
@@ -1072,13 +1159,50 @@ AnalysisResult DoubaoMediaAnalyzer::process_response(const std::string &response
                 else
                 {
                     result.success = false;
-                    result.error = "vLLM API响应格式异常: 缺少content字段";
+                    // 提供更详细的错误信息
+                    std::string error_details = "vLLM API响应格式异常: 缺少content字段";
+                    if (!choice.contains("message"))
+                    {
+                        error_details = "vLLM API响应格式异常: 缺少message字段";
+                    }
+                    result.error = error_details;
                 }
+            }
+            else if (json_response.contains("error"))
+            {
+                // 处理vLLM API返回的错误信息
+                result.success = false;
+                std::string error_msg = "vLLM API错误: ";
+                
+                if (json_response["error"].contains("message"))
+                {
+                    error_msg += json_response["error"]["message"].get<std::string>();
+                }
+                else if (json_response["error"].is_string())
+                {
+                    error_msg += json_response["error"].get<std::string>();
+                }
+                else
+                {
+                    error_msg += json_response["error"].dump();
+                }
+                
+                if (json_response["error"].contains("type"))
+                {
+                    error_msg += " (类型: " + json_response["error"]["type"].get<std::string>() + ")";
+                }
+                
+                if (json_response["error"].contains("code"))
+                {
+                    error_msg += " (代码: " + std::to_string(json_response["error"]["code"].get<int>()) + ")";
+                }
+                
+                result.error = error_msg;
             }
             else
             {
                 result.success = false;
-                result.error = "vLLM API响应格式异常: " + response_text;
+                result.error = "vLLM API响应格式异常: 缺少choices字段或choices为空 - " + response_text.substr(0, std::min(200, (int)response_text.length()));
             }
         }
         else
