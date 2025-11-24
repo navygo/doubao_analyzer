@@ -9,9 +9,9 @@ namespace config
     // const std::string API_KEY = ""; // 默认空值，需要在命令行参数中指定
 
     // 默认使用本地Ollama API
-    const std::string BASE_URL = "http://127.0.0.1:11434/api/generate";
-    const std::string MODEL_NAME = "qwen3-vl:8b"; // qwen3-vl:235b-cloud
-    const std::string API_KEY = "";               // 默认空值，Ollama通常不需要API密钥
+    const std::string BASE_URL = "http://172.22.5.101:11434/api/generate"; // "http://127.0.0.1:11434/api/generate";
+    const std::string MODEL_NAME = "qwen3-vl:8b-instruct-q4_K_M";          // qwen3-vl:235b-cloud
+    const std::string API_KEY = "";                                        // 默认空值，Ollama通常不需要API密钥
 
     // 默认值
     const int DEFAULT_MAX_TOKENS = 1500;

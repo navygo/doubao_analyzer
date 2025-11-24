@@ -143,7 +143,8 @@ public:
 
     // 分析视频内容
     VideoAnalysisResult analyze_video_content(const std::string &video_url,
-                                              const std::string &method = "keyframes");
+                                              const std::string &method = "keyframes",
+                                              int num_frames = 5);
 
     // 对视频进行分类
     std::pair<VideoClassification, VideoAnalysisResult> classify_video(const std::string &video_url);

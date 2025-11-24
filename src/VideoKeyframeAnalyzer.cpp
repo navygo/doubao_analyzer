@@ -170,6 +170,8 @@ std::vector<std::string> VideoKeyframeAnalyzer::extract_keyframes(const std::str
 
     try
     {
+        // 移除帧数限制，允许根据参数动态调整
+        //
         // 创建临时输出文件路径
         std::string output_pattern = temp_dir_ + "/keyframe_%03d." + output_format;
 
@@ -317,6 +319,8 @@ std::vector<std::string> VideoKeyframeAnalyzer::extract_sample_frames(const std:
 
     try
     {
+        // 移除帧数限制，允许根据参数动态调整
+        //
         // 获取视频时长
         VideoMetadata metadata = get_video_metadata(video_url);
 
@@ -434,7 +438,8 @@ FrameAnalysis VideoKeyframeAnalyzer::analyze_frame(const cv::Mat &frame, double 
 }
 
 VideoAnalysisResult VideoKeyframeAnalyzer::analyze_video_content(const std::string &video_url,
-                                                                 const std::string &method)
+                                                                 const std::string &method,
+                                                                 int num_frames)
 {
     VideoAnalysisResult result;
     result.method = method;
@@ -454,11 +459,11 @@ VideoAnalysisResult VideoKeyframeAnalyzer::analyze_video_content(const std::stri
         std::vector<std::string> frames_base64;
         if (method == "keyframes")
         {
-            frames_base64 = extract_keyframes(video_url);
+            frames_base64 = extract_keyframes(video_url, num_frames);
         }
         else
         {
-            frames_base64 = extract_sample_frames(video_url);
+            frames_base64 = extract_sample_frames(video_url, num_frames);
         }
 
         if (frames_base64.empty())
@@ -522,7 +527,7 @@ VideoAnalysisResult VideoKeyframeAnalyzer::analyze_video_content(const std::stri
 
 std::pair<VideoClassification, VideoAnalysisResult> VideoKeyframeAnalyzer::classify_video(const std::string &video_url)
 {
-    VideoAnalysisResult analysis = analyze_video_content(video_url);
+    VideoAnalysisResult analysis = analyze_video_content(video_url, "keyframes", 5);
     VideoClassification classification;
 
     if (!analysis.success)
