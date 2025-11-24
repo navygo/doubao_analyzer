@@ -423,8 +423,15 @@ AnalysisResult DoubaoMediaAnalyzer::analyze_video_efficiently(const std::string 
                                {"text", "这是视频的第" + std::to_string(i + 1) + "个关键帧"}});
         }
 
+        // 按传递模型名称（如果有）或默认模型名称构建请求
+        std::string original_model_name = model_name_;
+        if (!model_name.empty())
+        {
+            original_model_name = model_name;
+        }
+
         nlohmann::json payload = {
-            {"model", model_name_},
+            {"model", original_model_name},
             {"messages", {{{"role", "user"}, {"content", content}}}},
             {"max_tokens", max_tokens},
             {"temperature", config::DEFAULT_TEMPERATURE},
@@ -434,6 +441,7 @@ AnalysisResult DoubaoMediaAnalyzer::analyze_video_efficiently(const std::string 
         std::cout << "⏰ [时间戳] API请求开始时间: " << utils::get_formatted_timestamp() << std::endl;
         std::cout << "📊 [参数] 请求帧数: " << frames_base64.size() << std::endl;
         std::cout << "📊 [参数] 最大令牌数: " << max_tokens << std::endl;
+        std::cout << "📊 [参数] 使用模型: " << original_model_name << std::endl;
 
         double start_time = utils::get_current_time();
         result = send_analysis_request(payload, config::VIDEO_ANALYSIS_TIMEOUT);
