@@ -12,12 +12,14 @@ namespace config
         std::string model_name;
         std::string api_key;
         bool use_ollama;
+        bool use_vllm;  // 添加vLLM支持
 
         // 构造函数，设置默认值
         ApiConfig() : base_url(""),
                       model_name(""),
                       api_key(""),
-                      use_ollama(true) {}
+                      use_ollama(true),
+                      use_vllm(false) {}
     };
 
     // API配置

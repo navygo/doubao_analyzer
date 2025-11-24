@@ -31,9 +31,13 @@ private:
     std::unique_ptr<DatabaseManager> db_manager_;
     std::unique_ptr<VideoKeyframeAnalyzer> video_analyzer_;
     bool use_ollama_; // 标识是否使用Ollama API
+    bool use_vllm_;   // 标识是否使用vLLM API
 
     // 判断是否使用Ollama API
     bool is_ollama_api(const std::string &url) const;
+
+    // 判断是否使用vLLM API
+    bool is_vllm_api(const std::string &url) const;
 
 public:
     // 使用默认配置构造函数

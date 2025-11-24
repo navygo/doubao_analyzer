@@ -22,12 +22,22 @@ bool DoubaoMediaAnalyzer::is_ollama_api(const std::string &url) const
             url.find("11434/api") != std::string::npos);
 }
 
+// 判断是否使用vLLM API
+bool DoubaoMediaAnalyzer::is_vllm_api(const std::string &url) const
+{
+    return (url.find("vllm") != std::string::npos ||
+            url.find(":8000") != std::string::npos ||
+            url.find("/v1/") != std::string::npos);
+}
+
 // 使用默认配置构造函数
 DoubaoMediaAnalyzer::DoubaoMediaAnalyzer(const std::string &api_key)
     : api_key_(api_key), base_url_(config::BASE_URL), model_name_(config::MODEL_NAME)
 {
     // 检查是否使用Ollama API
     use_ollama_ = is_ollama_api(base_url_);
+    // 检查是否使用vLLM API
+    use_vllm_ = is_vllm_api(base_url_);
 
     curl_global_init(CURL_GLOBAL_DEFAULT);
 
@@ -66,6 +76,8 @@ DoubaoMediaAnalyzer::DoubaoMediaAnalyzer(const std::string &api_key, const std::
 {
     // 检查是否使用Ollama API
     use_ollama_ = is_ollama_api(base_url_);
+    // 检查是否使用vLLM API
+    use_vllm_ = is_vllm_api(base_url_);
 
     curl_global_init(CURL_GLOBAL_DEFAULT);
 
@@ -100,7 +112,7 @@ DoubaoMediaAnalyzer::DoubaoMediaAnalyzer(const std::string &api_key, const std::
 
 // 使用ApiConfig结构体构造函数
 DoubaoMediaAnalyzer::DoubaoMediaAnalyzer(const config::ApiConfig &api_config)
-    : api_key_(api_config.api_key), base_url_(api_config.base_url), model_name_(api_config.model_name), use_ollama_(api_config.use_ollama)
+    : api_key_(api_config.api_key), base_url_(api_config.base_url), model_name_(api_config.model_name), use_ollama_(api_config.use_ollama), use_vllm_(api_config.use_vllm)
 {
     curl_global_init(CURL_GLOBAL_DEFAULT);
 
@@ -186,6 +198,10 @@ bool DoubaoMediaAnalyzer::test_connection()
             {
                 std::cout << "✅ Ollama API连接正常" << std::endl;
             }
+            else if (use_vllm_)
+            {
+                std::cout << "✅ vLLM API连接正常" << std::endl;
+            }
             else
             {
                 std::cout << "✅ 豆包API连接正常" << std::endl;
@@ -194,7 +210,19 @@ bool DoubaoMediaAnalyzer::test_connection()
         }
         else
         {
-            std::string api_type = use_ollama_ ? "Ollama" : "豆包";
+            std::string api_type;
+            if (use_ollama_)
+            {
+                api_type = "Ollama";
+            }
+            else if (use_vllm_)
+            {
+                api_type = "vLLM";
+            }
+            else
+            {
+                api_type = "豆包";
+            }
             std::cout << "❌ " << api_type << " API连接失败: " << result.error << std::endl;
             return false;
         }
@@ -694,6 +722,20 @@ AnalysisResult DoubaoMediaAnalyzer::send_analysis_request(const nlohmann::json &
             // Ollama API不需要Authorization头
             headers = {"Content-Type: application/json"};
         }
+        else if (use_vllm_)
+        {
+            // vLLM API可能需要Authorization头，取决于配置
+            if (!api_key_.empty())
+            {
+                headers = {
+                    "Authorization: Bearer " + api_key_,
+                    "Content-Type: application/json"};
+            }
+            else
+            {
+                headers = {"Content-Type: application/json"};
+            }
+        }
         else
         {
             // 豆包API需要Authorization头
@@ -883,6 +925,23 @@ AnalysisResult DoubaoMediaAnalyzer::send_analysis_request(const nlohmann::json &
                 }
             }
         }
+        else if (use_vllm_)
+        {
+            // vLLM API格式，兼容OpenAI格式
+            adjusted_payload = payload;
+
+            // vLLM API需要确保max_tokens参数存在
+            if (!adjusted_payload.contains("max_tokens"))
+            {
+                adjusted_payload["max_tokens"] = 1000;
+            }
+
+            // vLLM API不支持stream参数，移除它
+            if (adjusted_payload.contains("stream"))
+            {
+                adjusted_payload.erase("stream");
+            }
+        }
         else
         {
             // 豆包API格式，直接使用原始payload
@@ -897,6 +956,10 @@ AnalysisResult DoubaoMediaAnalyzer::send_analysis_request(const nlohmann::json &
         if (use_ollama_)          // 先假设所有请求都不是Ollama API，便于调试
         {
             enable_http2 = false; // Ollama API不支持HTTP/2
+        }
+        else if (use_vllm_)
+        {
+            enable_http2 = false; // vLLM API通常不支持HTTP/2
         }
 
         // 记录请求开始时间
@@ -980,6 +1043,42 @@ AnalysisResult DoubaoMediaAnalyzer::process_response(const std::string &response
                     result.success = false;
                     result.error = "Ollama /api/chat API响应格式异常: " + response_text;
                 }
+            }
+        }
+        else if (use_vllm_)
+        {
+            // vLLM API响应格式，兼容OpenAI格式
+            if (json_response.contains("choices") && json_response["choices"].is_array() &&
+                !json_response["choices"].empty())
+            {
+                auto choice = json_response["choices"][0];
+                if (choice.contains("message") && choice["message"].contains("content"))
+                {
+                    result.success = true;
+                    result.content = choice["message"]["content"].get<std::string>();
+
+                    if (json_response.contains("usage"))
+                    {
+                        result.usage = json_response["usage"];
+                    }
+                    else
+                    {
+                        // vLLM可能不返回usage信息，创建一个空的
+                        result.usage = nlohmann::json::object();
+                    }
+
+                    result.raw_response = json_response;
+                }
+                else
+                {
+                    result.success = false;
+                    result.error = "vLLM API响应格式异常: 缺少content字段";
+                }
+            }
+            else
+            {
+                result.success = false;
+                result.error = "vLLM API响应格式异常: " + response_text;
             }
         }
         else
