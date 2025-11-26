@@ -6,6 +6,7 @@
 
 - 🖼️ **图片分析**: 支持常见图片格式 (JPG, PNG, BMP, WebP等)
 - 🎬 **视频分析**: 支持多种视频格式 (MP4, AVI, MOV, MKV等)
+- 🎯 **智能关键帧提取**: 自动识别视频中的关键帧，提高分析效率
 - 📁 **批量处理**: 支持文件夹批量分析
 - 🏷️ **智能标签**: 自动从分析结果中提取标签
 - ⚡ **高性能**: C++17实现，处理速度快
@@ -62,7 +63,14 @@ doubao_analyzer --api-key YOUR_API_KEY --image test.jpg
 
 #### 分析单个视频
 ```bash
+# 使用默认设置分析视频（自动提取关键帧）
+doubao_analyzer --api-key YOUR_API_KEY --video test.mp4
+
+# 指定提取的关键帧数量
 doubao_analyzer --api-key YOUR_API_KEY --video test.mp4 --video-frames 8
+
+# 使用智能关键帧提取模式（自动选择最佳帧数）
+doubao_analyzer --api-key YOUR_API_KEY --video test.mp4 --smart-frames
 ```
 
 #### 批量分析文件夹
@@ -126,6 +134,7 @@ doubao_analyzer/
 ├── CMakeLists.txt          # 构建配置
 ├── include/               # 头文件
 │   ├── DoubaoMediaAnalyzer.hpp
+│   ├── VideoKeyframeAnalyzer.hpp
 │   ├── utils.hpp
 │   ├── config.hpp
 │   ├── DatabaseManager.hpp
@@ -134,6 +143,7 @@ doubao_analyzer/
 │   ├── main.cpp
 │   ├── DoubaoMediaAnalyzer.cpp
 │   ├── DoubaoMediaAnalyzer_db.cpp
+│   ├── VideoKeyframeAnalyzer.cpp
 │   ├── DatabaseManager.cpp
 │   ├── ConfigManager.cpp
 │   └── utils.cpp
@@ -192,6 +202,13 @@ FLUSH PRIVILEGES;
 - 调整 config.hpp 中的超时设置
 - 修改视频帧提取数量
 - 调整图像压缩质量
+
+### 视频关键帧分析技术
+- **智能帧选择算法**: 自动识别视频中内容变化显著的帧
+- **场景变化检测**: 基于直方图差异和结构相似性检测场景转换
+- **运动分析**: 通过光流和帧间差异检测运动剧烈程度
+- **自适应采样**: 根据视频长度和内容复杂度动态调整采样率
+- **质量优化**: 自动过滤模糊、低质量或重复帧
 
 ### Ollama模型优化
 - 图片处理自动转换为Ollama支持的格式(JPEG/PNG)

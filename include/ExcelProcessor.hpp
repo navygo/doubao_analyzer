@@ -41,7 +41,9 @@ public:
         const std::vector<ExcelRowData> &excel_data,
         const std::string &prompt,
         int max_tokens = 1500,
-        bool save_to_db = true);
+        int video_frames = 5,
+        bool save_to_db = true,
+        const std::string &model_name = "");
 
     // 更新Excel文件中的标签列
     bool update_excel_tags(
@@ -56,7 +58,9 @@ public:
     std::vector<AnalysisTask> analyze_db_media(
         const std::string &prompt,
         int max_tokens = 1500,
-        bool save_to_db = true);
+        int video_frames = 5,
+        bool save_to_db = true,
+        const std::string &model_name = "");
 
 private:
     // 从XLSX文件读取数据

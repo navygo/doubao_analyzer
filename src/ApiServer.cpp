@@ -552,12 +552,15 @@ ApiResponse ApiServer::process_request(const std::string &request_json, const st
 
             // 获取请求参数
             std::string prompt = request_data.value("prompt", "");
-            int max_tokens = request_data.value("max_tokens", 1500);
+            int max_tokens = request_data.value("max_tokens", 2000);
+            int video_frames = request_data.value("video_frames", 5);
             bool save_to_db = request_data.value("save_to_db", true);
+            // 添加大模型配置参数 （可选）
+            std::string model_name = request_data.value("model_name", "");
 
             // 处理请求
             double start_time = utils::get_current_time();
-            response = handle_db_media_analysis(prompt, max_tokens, save_to_db);
+            response = handle_db_media_analysis(prompt, max_tokens, video_frames, save_to_db, model_name);
             response.response_time = utils::get_current_time() - start_time;
             return response;
         }
@@ -1309,7 +1312,7 @@ bool ApiServer::save_batch_to_database(const std::vector<AnalysisResult> &result
 }
 
 // 处理数据库媒体分析请求
-ApiResponse ApiServer::handle_db_media_analysis(const std::string &prompt, int max_tokens, bool save_to_db)
+ApiResponse ApiServer::handle_db_media_analysis(const std::string &prompt, int max_tokens, int video_frames, bool save_to_db, const std::string &model_name)
 {
     ApiResponse response;
     double start_time = utils::get_current_time();
@@ -1358,7 +1361,7 @@ ApiResponse ApiServer::handle_db_media_analysis(const std::string &prompt, int m
             std::cout << "🔍 [批次处理] 正在处理第 " << (i + 1) << "/" << total_batches << " 批次，包含 " << batch_data.size() << " 条数据" << std::endl;
 
             // 为当前批次创建分析任务
-            auto tasks = processor.create_analysis_tasks(batch_data, analysis_prompt, tokens, save_to_db);
+            auto tasks = processor.create_analysis_tasks(batch_data, analysis_prompt, tokens, video_frames, save_to_db, model_name);
             if (tasks.empty())
             {
                 std::cout << "⚠️ [批次处理] 第 " << (i + 1) << " 批次没有有效的分析任务，跳过" << std::endl;

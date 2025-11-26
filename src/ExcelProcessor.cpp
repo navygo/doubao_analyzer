@@ -347,7 +347,9 @@ std::vector<AnalysisTask> ExcelProcessor::create_analysis_tasks(
     const std::vector<ExcelRowData> &excel_data,
     const std::string &prompt,
     int max_tokens,
-    bool save_to_db)
+    int video_frames,
+    bool save_to_db,
+    const std::string &model_name)
 {
     std::vector<AnalysisTask> tasks;
 
@@ -375,7 +377,9 @@ std::vector<AnalysisTask> ExcelProcessor::create_analysis_tasks(
 
         task.prompt = prompt;
         task.max_tokens = max_tokens;
+        task.video_frames = video_frames;
         task.save_to_db = save_to_db;
+        task.model_name = model_name;
         task.file_id = row.content_id; // 使用内容ID作为file_id
 
         // 根据内容类型确定媒体类型
@@ -720,11 +724,13 @@ std::vector<ExcelRowData> ExcelProcessor::read_media_from_db()
 std::vector<AnalysisTask> ExcelProcessor::analyze_db_media(
     const std::string &prompt,
     int max_tokens,
-    bool save_to_db)
+    int video_frames,
+    bool save_to_db,
+    const std::string &model_name)
 {
     // 从数据库读取媒体数据
     auto media_data = read_media_from_db();
 
     // 转换为分析任务
-    return create_analysis_tasks(media_data, prompt, max_tokens, save_to_db);
+    return create_analysis_tasks(media_data, prompt, max_tokens, video_frames, save_to_db, model_name);
 }
