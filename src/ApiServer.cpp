@@ -93,8 +93,8 @@ ApiServer::ApiServer(const std::string &api_key, int port, const std::string &ho
     // 初始化分析器
     analyzer_ = std::make_unique<DoubaoMediaAnalyzer>(api_key);
 
-    // 初始化任务管理器（使用4个工作线程）调用大模型需要传递 api_key 提高线程12
-    TaskManager::getInstance().initialize(12, api_key);
+    // 初始化任务管理器（使用4个工作线程）调用大模型需要传递 api_key 提高线程16
+    TaskManager::getInstance().initialize(16, api_key);
 }
 
 ApiServer::~ApiServer()
@@ -557,10 +557,12 @@ ApiResponse ApiServer::process_request(const std::string &request_json, const st
             bool save_to_db = request_data.value("save_to_db", true);
             // 添加大模型配置参数 （可选）
             std::string model_name = request_data.value("model_name", "");
+            // 添加分批请求数参数
+            int batch_size = request_data.value("batch_size", 10);
 
             // 处理请求
             double start_time = utils::get_current_time();
-            response = handle_db_media_analysis(prompt, max_tokens, video_frames, save_to_db, model_name);
+            response = handle_db_media_analysis(prompt, max_tokens, video_frames, save_to_db, model_name, batch_size);
             response.response_time = utils::get_current_time() - start_time;
             return response;
         }
@@ -1312,7 +1314,7 @@ bool ApiServer::save_batch_to_database(const std::vector<AnalysisResult> &result
 }
 
 // 处理数据库媒体分析请求
-ApiResponse ApiServer::handle_db_media_analysis(const std::string &prompt, int max_tokens, int video_frames, bool save_to_db, const std::string &model_name)
+ApiResponse ApiServer::handle_db_media_analysis(const std::string &prompt, int max_tokens, int video_frames, bool save_to_db, const std::string &model_name, int batch_size)
 {
     ApiResponse response;
     double start_time = utils::get_current_time();
@@ -1341,11 +1343,11 @@ ApiResponse ApiServer::handle_db_media_analysis(const std::string &prompt, int m
         std::string analysis_prompt = prompt.empty() ? get_image_prompt() : prompt;
         int tokens = max_tokens > 0 ? max_tokens : config::DEFAULT_MAX_TOKENS;
 
-        // 分批次处理数据，每批10条
-        const size_t batch_size = 10;
-        size_t total_batches = (media_data.size() + batch_size - 1) / batch_size;
+        // 分批次处理数据，使用传入的batch_size参数，默认为10
+        const size_t actual_batch_size = batch_size > 0 ? batch_size : 10;
+        size_t total_batches = (media_data.size() + actual_batch_size - 1) / actual_batch_size;
 
-        std::cout << "🔄 [批次处理] 准备分 " << total_batches << " 批次处理数据，每批次最多 " << batch_size << " 条" << std::endl;
+        std::cout << "🔄 [批次处理] 准备分 " << total_batches << " 批次处理数据，每批次最多 " << actual_batch_size << " 条" << std::endl;
 
         // 用于存储所有任务结果
         std::vector<TaskResult> all_results;
@@ -1353,8 +1355,8 @@ ApiResponse ApiServer::handle_db_media_analysis(const std::string &prompt, int m
         // 分批次处理
         for (size_t i = 0; i < total_batches; ++i)
         {
-            size_t start_idx = i * batch_size;
-            size_t end_idx = std::min(start_idx + batch_size, media_data.size());
+            size_t start_idx = i * actual_batch_size;
+            size_t end_idx = std::min(start_idx + actual_batch_size, media_data.size());
 
             std::vector<ExcelRowData> batch_data(media_data.begin() + start_idx, media_data.begin() + end_idx);
 

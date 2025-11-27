@@ -12,17 +12,18 @@
 #include <string>
 
 // 封装CURL连接的类
-class CurlConnection {
+class CurlConnection
+{
 public:
     CurlConnection();
     ~CurlConnection();
 
     // 禁用拷贝构造和赋值
-    CurlConnection(const CurlConnection&) = delete;
-    CurlConnection& operator=(const CurlConnection&) = delete;
+    CurlConnection(const CurlConnection &) = delete;
+    CurlConnection &operator=(const CurlConnection &) = delete;
 
     // 获取原始CURL指针
-    CURL* get() const { return curl_; }
+    CURL *get() const { return curl_; }
 
     // 重置连接状态
     void reset();
@@ -31,17 +32,18 @@ public:
     bool is_valid() const { return curl_ != nullptr; }
 
 private:
-    CURL* curl_;
+    CURL *curl_;
 };
 
 // 连接池类
-class CurlConnectionPool {
+class CurlConnectionPool
+{
 public:
     // 获取单例实例
-    static CurlConnectionPool& getInstance();
+    static CurlConnectionPool &getInstance();
 
     // 初始化连接池
-    void initialize(size_t pool_size = 10);
+    void initialize(size_t pool_size = 30);
 
     // 获取一个连接
     std::shared_ptr<CurlConnection> acquire();
@@ -63,8 +65,8 @@ private:
     ~CurlConnectionPool();
 
     // 禁用拷贝构造和赋值
-    CurlConnectionPool(const CurlConnectionPool&) = delete;
-    CurlConnectionPool& operator=(const CurlConnectionPool&) = delete;
+    CurlConnectionPool(const CurlConnectionPool &) = delete;
+    CurlConnectionPool &operator=(const CurlConnectionPool &) = delete;
 
     // 创建新连接
     std::shared_ptr<CurlConnection> create_connection();

@@ -84,7 +84,7 @@ private:
     ApiResponse handle_excel_analysis(const ApiExcelRequest &request);
 
     // 处理数据库媒体分析请求
-    ApiResponse handle_db_media_analysis(const std::string &prompt, int max_tokens = 1500, int video_frames = 5, bool save_to_db = true, const std::string &model_name = "");
+    ApiResponse handle_db_media_analysis(const std::string &prompt, int max_tokens = 1500, int video_frames = 5, bool save_to_db = true, const std::string &model_name = "", int batch_size = 10);
 
     // 将结果保存到数据库
     bool save_to_database(const AnalysisResult &result, const std::string &media_url, const std::string &media_type);
