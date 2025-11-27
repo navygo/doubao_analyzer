@@ -46,6 +46,7 @@ set(SOURCES
     src/DatabaseManager_extended.cpp
     src/ConfigManager.cpp
     src/VideoKeyframeAnalyzer.cpp
+    src/CurlConnectionPool.cpp
     src/TaskManager.cpp
     src/GPUManager.cpp
     src/Jwt.cpp
@@ -65,6 +66,7 @@ set(API_SOURCES
     src/DatabaseManager_extended.cpp
     src/ConfigManager.cpp
     src/VideoKeyframeAnalyzer.cpp
+    src/CurlConnectionPool.cpp
     src/TaskManager.cpp
     src/GPUManager.cpp
     src/Jwt.cpp

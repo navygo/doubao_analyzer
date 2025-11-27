@@ -93,8 +93,8 @@ ApiServer::ApiServer(const std::string &api_key, int port, const std::string &ho
     // 初始化分析器
     analyzer_ = std::make_unique<DoubaoMediaAnalyzer>(api_key);
 
-    // 初始化任务管理器（使用4个工作线程）调用大模型需要传递 api_key
-    TaskManager::getInstance().initialize(4, api_key);
+    // 初始化任务管理器（使用4个工作线程）调用大模型需要传递 api_key 提高线程12
+    TaskManager::getInstance().initialize(12, api_key);
 }
 
 ApiServer::~ApiServer()

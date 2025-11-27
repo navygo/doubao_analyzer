@@ -2,7 +2,9 @@
 #include "utils.hpp"
 #include "config.hpp"
 #include "ConfigManager.hpp"
+#include "CurlConnectionPool.hpp"
 #include <curl/curl.h>
+#include <curl/easy.h>
 #include <sstream>
 #include <iostream>
 
@@ -40,6 +42,9 @@ DoubaoMediaAnalyzer::DoubaoMediaAnalyzer(const std::string &api_key)
     use_vllm_ = is_vllm_api(base_url_);
 
     curl_global_init(CURL_GLOBAL_DEFAULT);
+
+    // 初始化连接池
+    CurlConnectionPool::getInstance().initialize(10);
 
     // 从配置文件加载数据库配置
     ConfigManager config_manager;
@@ -81,6 +86,9 @@ DoubaoMediaAnalyzer::DoubaoMediaAnalyzer(const std::string &api_key, const std::
 
     curl_global_init(CURL_GLOBAL_DEFAULT);
 
+    // 初始化连接池
+    CurlConnectionPool::getInstance().initialize(10);
+
     // 从配置文件加载数据库配置
     ConfigManager config_manager;
     if (config_manager.load_config())
@@ -115,6 +123,9 @@ DoubaoMediaAnalyzer::DoubaoMediaAnalyzer(const config::ApiConfig &api_config)
     : api_key_(api_config.api_key), base_url_(api_config.base_url), model_name_(api_config.model_name), use_ollama_(api_config.use_ollama), use_vllm_(api_config.use_vllm)
 {
     curl_global_init(CURL_GLOBAL_DEFAULT);
+
+    // 初始化连接池
+    CurlConnectionPool::getInstance().initialize(10);
 
     // 从配置文件加载数据库配置
     ConfigManager config_manager;
@@ -941,13 +952,13 @@ AnalysisResult DoubaoMediaAnalyzer::send_analysis_request(const nlohmann::json &
             {
                 adjusted_payload.erase("stream");
             }
-            
+
             // 确保model字段存在
             if (!adjusted_payload.contains("model") || adjusted_payload["model"].empty())
             {
                 adjusted_payload["model"] = model_name_;
             }
-            
+
             // 验证messages字段格式
             if (adjusted_payload.contains("messages"))
             {
@@ -955,9 +966,9 @@ AnalysisResult DoubaoMediaAnalyzer::send_analysis_request(const nlohmann::json &
                 {
                     throw std::runtime_error("vLLM API请求格式错误: messages必须是非空数组");
                 }
-                
+
                 // 检查每个message是否有role和content
-                for (const auto& msg : adjusted_payload["messages"])
+                for (const auto &msg : adjusted_payload["messages"])
                 {
                     if (!msg.contains("role") || !msg.contains("content"))
                     {
@@ -991,17 +1002,17 @@ AnalysisResult DoubaoMediaAnalyzer::send_analysis_request(const nlohmann::json &
         std::cout << "⏰ [性能] 开始发送HTTP请求，超时设置: " << timeout << " 秒" << std::endl;
 
         std::string response;
-        try 
+        try
         {
             response = make_http_request(base_url_, "POST", payload_str, headers, timeout, enable_http2);
-            
+
             // 检查响应是否为空
             if (response.empty())
             {
                 throw std::runtime_error("服务器返回空响应");
             }
         }
-        catch (const std::exception& e)
+        catch (const std::exception &e)
         {
             std::string api_type = "豆包";
             if (use_ollama_)
@@ -1012,21 +1023,21 @@ AnalysisResult DoubaoMediaAnalyzer::send_analysis_request(const nlohmann::json &
             {
                 api_type = "vLLM";
             }
-            
+
             std::string error_msg = api_type + " 请求失败: " + std::string(e.what());
-            
+
             // 为vLLM添加更详细的错误信息
             if (use_vllm_)
             {
                 error_msg += " (URL: " + base_url_ + ", Model: " + model_name_ + ", Timeout: " + std::to_string(timeout) + "s)";
-                
+
                 // 检查是否是连接超时
-                if (std::string(e.what()).find("timeout") != std::string::npos || 
+                if (std::string(e.what()).find("timeout") != std::string::npos ||
                     std::string(e.what()).find("timed out") != std::string::npos)
                 {
                     error_msg += " - 建议检查vLLM服务是否运行正常，或增加超时时间";
                 }
-                
+
                 // 检查是否是连接被拒绝
                 if (std::string(e.what()).find("Connection refused") != std::string::npos ||
                     std::string(e.what()).find("Failed to connect") != std::string::npos)
@@ -1034,7 +1045,7 @@ AnalysisResult DoubaoMediaAnalyzer::send_analysis_request(const nlohmann::json &
                     error_msg += " - 建议检查vLLM服务地址和端口是否正确";
                 }
             }
-            
+
             throw std::runtime_error(error_msg);
         }
 
@@ -1065,15 +1076,15 @@ AnalysisResult DoubaoMediaAnalyzer::send_analysis_request(const nlohmann::json &
         {
             api_type = "vLLM";
         }
-        
+
         result.error = api_type + " HTTP请求异常: " + std::string(e.what());
-        
+
         // 添加额外的调试信息
         if (use_vllm_)
         {
             result.error += " (URL: " + base_url_ + ", Model: " + model_name_ + ")";
         }
-        
+
         return result;
     }
 }
@@ -1173,7 +1184,7 @@ AnalysisResult DoubaoMediaAnalyzer::process_response(const std::string &response
                 // 处理vLLM API返回的错误信息
                 result.success = false;
                 std::string error_msg = "vLLM API错误: ";
-                
+
                 if (json_response["error"].contains("message"))
                 {
                     error_msg += json_response["error"]["message"].get<std::string>();
@@ -1186,17 +1197,17 @@ AnalysisResult DoubaoMediaAnalyzer::process_response(const std::string &response
                 {
                     error_msg += json_response["error"].dump();
                 }
-                
+
                 if (json_response["error"].contains("type"))
                 {
                     error_msg += " (类型: " + json_response["error"]["type"].get<std::string>() + ")";
                 }
-                
+
                 if (json_response["error"].contains("code"))
                 {
                     error_msg += " (代码: " + std::to_string(json_response["error"]["code"].get<int>()) + ")";
                 }
-                
+
                 result.error = error_msg;
             }
             else
@@ -1251,9 +1262,7 @@ AnalysisResult DoubaoMediaAnalyzer::process_response(const std::string &response
     return result;
 }
 
-// 静态CURL句柄，用于连接复用
-static CURL *shared_curl = nullptr;
-static std::mutex curl_mutex;
+// 使用连接池替代单一静态CURL句柄
 
 std::string DoubaoMediaAnalyzer::make_http_request(const std::string &url,
                                                    const std::string &method,
@@ -1262,50 +1271,39 @@ std::string DoubaoMediaAnalyzer::make_http_request(const std::string &url,
                                                    int timeout,
                                                    bool enable_http2)
 {
+    // 获取连接池实例
+    auto &pool = CurlConnectionPool::getInstance();
 
-    std::lock_guard<std::mutex> lock(curl_mutex);
-
-    // 初始化或重用CURL句柄
-    if (!shared_curl)
+    // 从连接池获取连接
+    auto connection = pool.acquire();
+    if (!connection || !connection->is_valid())
     {
-        shared_curl = curl_easy_init();
-        // 设置全局选项
-        curl_easy_setopt(shared_curl, CURLOPT_TCP_KEEPALIVE, 1L);
-        curl_easy_setopt(shared_curl, CURLOPT_TCP_KEEPIDLE, 60L);
-        curl_easy_setopt(shared_curl, CURLOPT_TCP_KEEPINTVL, 30L);
-        curl_easy_setopt(shared_curl, CURLOPT_FORBID_REUSE, 0L);
-
-        // 添加更多性能优化选项
-        curl_easy_setopt(shared_curl, CURLOPT_NOSIGNAL, 1L);        // 避免信号中断
-        curl_easy_setopt(shared_curl, CURLOPT_TCP_NODELAY, 1L);     // 禁用Nagle算法，减少延迟
-        curl_easy_setopt(shared_curl, CURLOPT_BUFFERSIZE, 102400L); // 增大缓冲区大小到100KB
+        throw std::runtime_error("无法从连接池获取有效连接");
     }
+
+    // 使用RAII确保连接归还
+    auto connection_guard = std::shared_ptr<void>(nullptr, [&](void *)
+                                                  { pool.release(connection); });
 
     std::string response;
+    CURL *curl = connection->get();
 
     // 设置请求特定选项
-    curl_easy_setopt(shared_curl, CURLOPT_URL, url.c_str());
-    curl_easy_setopt(shared_curl, CURLOPT_CUSTOMREQUEST, method.c_str());
-    curl_easy_setopt(shared_curl, CURLOPT_POSTFIELDS, data.c_str());
-    curl_easy_setopt(shared_curl, CURLOPT_POSTFIELDSIZE, data.length());
-    curl_easy_setopt(shared_curl, CURLOPT_WRITEFUNCTION, write_callback);
-    curl_easy_setopt(shared_curl, CURLOPT_WRITEDATA, &response);
-    curl_easy_setopt(shared_curl, CURLOPT_TIMEOUT, timeout);
+    curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
+    curl_easy_setopt(curl, CURLOPT_CUSTOMREQUEST, method.c_str());
+    curl_easy_setopt(curl, CURLOPT_POSTFIELDS, data.c_str());
+    curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE, data.length());
+    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_callback);
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response);
+    curl_easy_setopt(curl, CURLOPT_TIMEOUT, timeout);
 
     // 启用HTTP/2和压缩
-    // 根据参数决定是否启用HTTP/2
-    // curl_easy_setopt(shared_curl, CURLOPT_HTTP_VERSION, CURL_HTTP_VERSION_2_PRIOR_KNOWLEDGE);
     if (enable_http2)
     {
-        curl_easy_setopt(shared_curl, CURLOPT_HTTP_VERSION, CURL_HTTP_VERSION_2_PRIOR_KNOWLEDGE);
+        curl_easy_setopt(curl, CURLOPT_HTTP_VERSION, CURL_HTTP_VERSION_2_PRIOR_KNOWLEDGE);
     }
-    // else
-    // {
-    //     // 如果不支持HTTP/2，使用HTTP/1.1
-    //     curl_easy_setopt(shared_curl, CURLOPT_HTTP_VERSION, CURL_HTTP_VERSION_1_1);
-    // }
     // 压缩
-    curl_easy_setopt(shared_curl, CURLOPT_ACCEPT_ENCODING, "gzip, deflate");
+    curl_easy_setopt(curl, CURLOPT_ACCEPT_ENCODING, "gzip, deflate");
 
     // 设置headers
     struct curl_slist *header_list = nullptr;
@@ -1313,11 +1311,11 @@ std::string DoubaoMediaAnalyzer::make_http_request(const std::string &url,
     {
         header_list = curl_slist_append(header_list, header.c_str());
     }
-    curl_easy_setopt(shared_curl, CURLOPT_HTTPHEADER, header_list);
+    curl_easy_setopt(curl, CURLOPT_HTTPHEADER, header_list);
 
     // 执行请求
     double perform_start = utils::get_current_time();
-    CURLcode res = curl_easy_perform(shared_curl);
+    CURLcode res = curl_easy_perform(curl);
     double perform_end = utils::get_current_time();
     double perform_time = perform_end - perform_start;
 
@@ -1329,12 +1327,12 @@ std::string DoubaoMediaAnalyzer::make_http_request(const std::string &url,
     double pretransfer_time;
     double starttransfer_time;
 
-    curl_easy_getinfo(shared_curl, CURLINFO_TOTAL_TIME, &total_time);
-    curl_easy_getinfo(shared_curl, CURLINFO_NAMELOOKUP_TIME, &namelookup_time);
-    curl_easy_getinfo(shared_curl, CURLINFO_CONNECT_TIME, &connect_time);
-    curl_easy_getinfo(shared_curl, CURLINFO_APPCONNECT_TIME, &appconnect_time);
-    curl_easy_getinfo(shared_curl, CURLINFO_PRETRANSFER_TIME, &pretransfer_time);
-    curl_easy_getinfo(shared_curl, CURLINFO_STARTTRANSFER_TIME, &starttransfer_time);
+    curl_easy_getinfo(curl, CURLINFO_TOTAL_TIME, &total_time);
+    curl_easy_getinfo(curl, CURLINFO_NAMELOOKUP_TIME, &namelookup_time);
+    curl_easy_getinfo(curl, CURLINFO_CONNECT_TIME, &connect_time);
+    curl_easy_getinfo(curl, CURLINFO_APPCONNECT_TIME, &appconnect_time);
+    curl_easy_getinfo(curl, CURLINFO_PRETRANSFER_TIME, &pretransfer_time);
+    curl_easy_getinfo(curl, CURLINFO_STARTTRANSFER_TIME, &starttransfer_time);
 
     std::cout << "⏰ [性能] CURL执行完成，耗时: " << perform_time << " 秒" << std::endl;
     std::cout << "⏰ [性能] DNS解析: " << namelookup_time << " 秒" << std::endl;
@@ -1343,6 +1341,8 @@ std::string DoubaoMediaAnalyzer::make_http_request(const std::string &url,
     std::cout << "⏰ [性能] 传输准备: " << pretransfer_time << " 秒" << std::endl;
     std::cout << "⏰ [性能] 首字节响应: " << starttransfer_time << " 秒" << std::endl;
     std::cout << "⏰ [性能] 总耗时: " << total_time << " 秒" << std::endl;
+    std::cout << "🔗 [连接池] 活跃连接: " << pool.get_active_connections()
+              << ", 空闲连接: " << pool.get_idle_connections() << std::endl;
 
     curl_slist_free_all(header_list);
 
@@ -1352,7 +1352,7 @@ std::string DoubaoMediaAnalyzer::make_http_request(const std::string &url,
 
         // 添加更多调试信息
         long response_code;
-        curl_easy_getinfo(shared_curl, CURLINFO_RESPONSE_CODE, &response_code);
+        curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &response_code);
         if (response_code > 0)
         {
             error_msg += " (HTTP状态码: " + std::to_string(response_code) + ")";

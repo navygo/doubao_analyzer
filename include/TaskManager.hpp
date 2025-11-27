@@ -45,7 +45,7 @@ public:
     static TaskManager &getInstance();
 
     // 初始化线程池
-    void initialize(size_t thread_count = 4, const std::string &api_key = "");
+    void initialize(size_t thread_count = 12, const std::string &api_key = "");
 
     // 添加分析任务
     std::future<TaskResult> addTask(const AnalysisTask &task);
