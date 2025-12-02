@@ -15,7 +15,7 @@ namespace config
 
     // 默认使用本地Vllm API
     const std::string BASE_URL = "http://172.22.5.101:8000/v1/chat/completions"; // "http://127.0.0.1:11434/api/generate";
-    const std::string MODEL_NAME = "Qwen/Qwen3-VL-4B-Instruct";                  // qwen3-vl:235b-cloud
+    const std::string MODEL_NAME = "../huggingface_models/Qwen3-VL-4B-Instruct"; // qwen3-vl:235b-cloud
     const std::string API_KEY = "";
 
     // 默认值
