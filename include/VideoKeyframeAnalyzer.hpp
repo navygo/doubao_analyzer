@@ -16,6 +16,7 @@ struct VideoMetadata
     double fps = 0.0;
     std::string codec;
     std::string url;
+    int total_frames = 0;  // 添加总帧数字段
 
     bool is_valid() const
     {

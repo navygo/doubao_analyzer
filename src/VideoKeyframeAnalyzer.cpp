@@ -99,7 +99,7 @@ VideoMetadata VideoKeyframeAnalyzer::get_video_metadata(const std::string &video
     {
         // 使用ffprobe获取视频元数据
         std::string cmd = "ffprobe -v error -select_streams v:0 -show_entries "
-                          "stream=width,height,duration,avg_frame_rate,codec_name "
+                          "stream=width,height,duration,avg_frame_rate,codec_name,nb_frames "
                           "-of json \"" +
                           video_url + "\"";
 
@@ -150,9 +150,39 @@ VideoMetadata VideoKeyframeAnalyzer::get_video_metadata(const std::string &video
             }
         }
 
+        // 获取总帧数
+        if (json_result.contains("streams") && json_result["streams"].is_array() &&
+            !json_result["streams"].empty())
+        {
+            auto stream = json_result["streams"][0];
+            if (stream.contains("nb_frames"))
+            {
+                if (stream["nb_frames"].is_string())
+                {
+                    metadata.total_frames = std::stoi(stream["nb_frames"].get<std::string>());
+                }
+                else
+                {
+                    metadata.total_frames = stream["nb_frames"];
+                }
+            }
+        }
+
+        // 如果无法直接获取总帧数，尝试通过时长和帧率计算
+        if (metadata.total_frames <= 0 && metadata.duration > 0 && metadata.fps > 0)
+        {
+            metadata.total_frames = static_cast<int>(metadata.duration * metadata.fps);
+        }
+
+        // 输出视频元数据，包括总帧数
         std::cout << "视频元数据: " << metadata.width << "x" << metadata.height
                   << ", " << metadata.duration << "秒, " << metadata.fps
-                  << " FPS, 编解码器: " << metadata.codec << std::endl;
+                  << " FPS, 编解码器: " << metadata.codec;
+        if (metadata.total_frames > 0)
+        {
+            std::cout << ", 总帧数: " << metadata.total_frames;
+        }
+        std::cout << std::endl;
     }
     catch (const std::exception &e)
     {
@@ -303,6 +333,43 @@ std::vector<std::string> VideoKeyframeAnalyzer::extract_keyframes(const std::str
         }
 
         std::cout << "成功提取 " << frames_base64.size() << " 个关键帧" << std::endl;
+
+        // 获取视频元数据和关键帧总数
+        try {
+            VideoMetadata metadata = get_video_metadata(video_url);
+            if (metadata.total_frames > 0) {
+                // 获取视频中的关键帧总数
+                std::string cmd = "ffprobe -v error -select_streams v:0 -show_entries "
+                                "frame=pict_type -of csv \"" + video_url + "\"";
+                std::string result = execute_command(cmd);
+
+                // 计算关键帧总数
+                int total_keyframes = 0;
+                std::istringstream iss(result);
+                std::string line;
+                while (std::getline(iss, line)) {
+                    if (line.find("I") != std::string::npos) {
+                        total_keyframes++;
+                    }
+                }
+
+                // 计算比例
+                double keyframe_ratio = (static_cast<double>(frames_base64.size()) / metadata.total_frames) * 100;
+                double extracted_ratio = total_keyframes > 0 ? 
+                    (static_cast<double>(frames_base64.size()) / total_keyframes) * 100 : 0;
+
+                // 输出统计信息
+                std::cout << "📊 [统计] 视频总帧数: " << metadata.total_frames << std::endl;
+                std::cout << "📊 [统计] 关键帧总数: " << total_keyframes << std::endl;
+                std::cout << "📊 [统计] 抽取关键帧数: " << frames_base64.size() << std::endl;
+                std::cout << "📊 [统计] 抽取帧占总帧数比例: " << std::fixed << std::setprecision(2) 
+                          << keyframe_ratio << "%" << std::endl;
+                std::cout << "📊 [统计] 抽取帧占关键帧总数比例: " << std::fixed << std::setprecision(2) 
+                          << extracted_ratio << "%" << std::endl;
+            }
+        } catch (const std::exception &e) {
+            std::cerr << "获取视频元数据失败: " << e.what() << std::endl;
+        }
     }
     catch (const std::exception &e)
     {
