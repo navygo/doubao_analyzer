@@ -3,6 +3,13 @@
 #include <string>
 #include <vector>
 #include <memory>
+#include <thread>
+#include <mutex>
+#include <atomic>
+#include <condition_variable>
+#include <queue>
+#include <future>
+#include <functional>
 #include <nlohmann/json.hpp>
 #include "DoubaoMediaAnalyzer.hpp"
 #include "TaskManager.hpp"
@@ -64,6 +71,20 @@ private:
     std::unique_ptr<DoubaoMediaAnalyzer> analyzer_;
     int port_;
     std::string host_;
+
+    // 并发处理相关成员
+    std::vector<std::thread> worker_threads_;
+    std::queue<std::function<void()>> request_queue_;
+    std::mutex queue_mutex_;
+    std::condition_variable queue_condition_;
+    std::atomic<bool> server_running_;
+    size_t max_concurrent_requests_;
+
+    // 请求处理工作线程函数
+    void request_worker_thread();
+
+    // 处理HTTP连接
+    void handle_connection(int client_socket);
 
     // 解析API请求
     ApiResponse parse_request(const std::string &request_json, const std::string &path);

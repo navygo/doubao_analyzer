@@ -14,6 +14,12 @@ find_package(CURL REQUIRED)
 find_package(OpenSSL REQUIRED)
 find_package(PkgConfig REQUIRED)
 
+# 如果找到CUDA，定义HAVE_CUDA宏并添加包含路径
+if(CUDA_FOUND)
+    add_definitions(-DHAVE_CUDA)
+    include_directories(${CUDA_INCLUDE_DIRS})
+endif()
+
 # 在第11行附近，将原来的 find_package(MySQL REQUIRED) 替换为：
 
 # 方法1：使用pkg-config

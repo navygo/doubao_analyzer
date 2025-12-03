@@ -6,6 +6,13 @@
 #include <memory>
 #include <opencv2/opencv.hpp>
 #include <nlohmann/json.hpp>
+#include <thread>
+#include <mutex>
+#include <condition_variable>
+#include <queue>
+#include <future>
+#include <atomic>
+#include <functional>
 
 // 视频元数据结构
 struct VideoMetadata
@@ -120,11 +127,32 @@ class VideoKeyframeAnalyzer
 private:
     std::string temp_dir_;
 
+    // 线程池相关成员
+    std::vector<std::thread> worker_threads_;
+    std::queue<std::function<void()>> task_queue_;
+    std::mutex queue_mutex_;
+    std::condition_variable queue_condition_;
+    std::atomic<bool> stop_threads_{false};
+
     // 内部方法
     std::string execute_command(const std::string &cmd);
     bool create_temp_directory();
     void cleanup_temp_directory();
     FrameAnalysis analyze_frame(const cv::Mat &frame, double timestamp);
+
+    // 线程池初始化
+    void initialize_thread_pool(int num_threads = std::thread::hardware_concurrency());
+
+    // 线程工作函数
+    void worker_thread();
+
+    // 并发处理帧
+    std::vector<std::string> process_frames_concurrently(
+        const std::vector<std::string>& frame_paths,
+        int max_concurrency = std::thread::hardware_concurrency());
+
+    // 单个帧的处理函数
+    std::string process_single_frame(const std::string& frame_path);
 
 public:
     VideoKeyframeAnalyzer();

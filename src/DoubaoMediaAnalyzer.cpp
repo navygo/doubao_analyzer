@@ -984,7 +984,7 @@ AnalysisResult DoubaoMediaAnalyzer::send_analysis_request(const nlohmann::json &
         }
 
         std::string payload_str = adjusted_payload.dump();
-        std::cout << "🔍 [调试] Ollama API请求URL: " << base_url_ << std::endl;
+        std::cout << "🔍 [调试] API请求URL: " << base_url_ << std::endl;
         std::cout << "⏰ [性能] 准备发送API请求，载荷大小: " << payload_str.size() << " 字节" << std::endl;
 
         bool enable_http2 = true; // 根据需要启用HTTP/2

@@ -15,10 +15,29 @@ VideoKeyframeAnalyzer::VideoKeyframeAnalyzer()
         throw std::runtime_error("无法创建临时目录");
     }
     std::cout << "临时目录: " << temp_dir_ << std::endl;
+
+    // 初始化线程池
+    initialize_thread_pool();
 }
 
 VideoKeyframeAnalyzer::~VideoKeyframeAnalyzer()
 {
+    // 停止所有工作线程
+    {
+        std::unique_lock<std::mutex> lock(queue_mutex_);
+        stop_threads_ = true;
+    }
+    queue_condition_.notify_all();
+
+    // 等待所有线程完成
+    for (auto &thread : worker_threads_)
+    {
+        if (thread.joinable())
+        {
+            thread.join();
+        }
+    }
+
     cleanup_temp_directory();
 }
 
@@ -52,6 +71,40 @@ void VideoKeyframeAnalyzer::cleanup_temp_directory()
         {
             std::cerr << "清理临时目录失败: " << e.what() << std::endl;
         }
+    }
+}
+
+// 初始化线程池
+void VideoKeyframeAnalyzer::initialize_thread_pool(int num_threads)
+{
+    for (int i = 0; i < num_threads; ++i)
+    {
+        worker_threads_.emplace_back(&VideoKeyframeAnalyzer::worker_thread, this);
+    }
+}
+
+// 线程工作函数
+void VideoKeyframeAnalyzer::worker_thread()
+{
+    while (true)
+    {
+        std::function<void()> task;
+
+        {
+            std::unique_lock<std::mutex> lock(queue_mutex_);
+            queue_condition_.wait(lock, [this]
+                                  { return !task_queue_.empty() || stop_threads_; });
+
+            if (stop_threads_ && task_queue_.empty())
+            {
+                return;
+            }
+
+            task = std::move(task_queue_.front());
+            task_queue_.pop();
+        }
+
+        task();
     }
 }
 
@@ -192,6 +245,86 @@ VideoMetadata VideoKeyframeAnalyzer::get_video_metadata(const std::string &video
     return metadata;
 }
 
+// 并发处理帧
+std::vector<std::string> VideoKeyframeAnalyzer::process_frames_concurrently(
+    const std::vector<std::string> &frame_paths,
+    int max_concurrency)
+{
+
+    std::vector<std::future<std::string>> futures;
+    std::vector<std::string> results;
+
+    // 提交所有帧处理任务
+    for (const auto &frame_path : frame_paths)
+    {
+        // 使用lambda函数捕获this指针，以便调用成员函数
+        std::function<std::string()> task = [this, frame_path]()
+        {
+            return process_single_frame(frame_path);
+        };
+
+        // 创建packaged_task并获取future
+        auto packaged_task = std::make_shared<std::packaged_task<std::string()>>(task);
+        futures.push_back(packaged_task->get_future());
+
+        // 将任务添加到队列
+        {
+            std::unique_lock<std::mutex> lock(queue_mutex_);
+            task_queue_.emplace([packaged_task]()
+                                { (*packaged_task)(); });
+        }
+        queue_condition_.notify_one();
+    }
+
+    // 等待所有任务完成并收集结果
+    for (auto &future : futures)
+    {
+        try
+        {
+            results.push_back(future.get());
+        }
+        catch (const std::exception &e)
+        {
+            std::cerr << "处理帧时出错: " << e.what() << std::endl;
+        }
+    }
+
+    return results;
+}
+
+// 处理单个帧
+std::string VideoKeyframeAnalyzer::process_single_frame(const std::string &frame_path)
+{
+    if (!std::filesystem::exists(frame_path))
+    {
+        return "";
+    }
+
+    try
+    {
+        // 读取图像
+        cv::Mat frame = cv::imread(frame_path);
+        if (frame.empty())
+        {
+            return "";
+        }
+
+        // 调整图像大小
+        cv::Mat resized_frame = utils::resize_image(frame, 800);
+
+        // 编码为JPEG并转换为base64
+        auto jpeg_data = utils::encode_image_to_jpeg(resized_frame, 85);
+        std::string frame_base64 = utils::base64_encode(jpeg_data);
+
+        return frame_base64;
+    }
+    catch (const std::exception &e)
+    {
+        std::cerr << "处理帧 " << frame_path << " 时出错: " << e.what() << std::endl;
+        return "";
+    }
+}
+
 std::vector<std::string> VideoKeyframeAnalyzer::extract_keyframes(const std::string &video_url,
                                                                   int max_frames,
                                                                   const std::string &output_format)
@@ -243,29 +376,26 @@ std::vector<std::string> VideoKeyframeAnalyzer::extract_keyframes(const std::str
 
         execute_command(cmd);
 
-        // 读取提取的帧并转换为base64
+        // 收集所有提取的帧文件路径
+        std::vector<std::string> frame_paths;
         for (int i = 1; i <= max_frames; ++i)
         {
             std::string frame_path = temp_dir_ + "/keyframe_" +
                                      (i < 10 ? "00" : (i < 100 ? "0" : "")) +
                                      std::to_string(i) + "." + output_format;
-
             if (std::filesystem::exists(frame_path))
             {
-                // 读取图像并转换为base64
-                cv::Mat frame = cv::imread(frame_path);
-                if (!frame.empty())
-                {
-                    // 调整图像大小以控制数据量
-                    cv::Mat resized_frame = utils::resize_image(frame, 800);
-
-                    // 编码为JPEG并转换为base64
-                    auto jpeg_data = utils::encode_image_to_jpeg(resized_frame, 85);
-                    std::string frame_base64 = utils::base64_encode(jpeg_data);
-                    frames_base64.push_back(frame_base64);
-                }
+                frame_paths.push_back(frame_path);
             }
         }
+
+        // 使用并发处理这些帧
+        auto concurrent_start = std::chrono::high_resolution_clock::now();
+        frames_base64 = process_frames_concurrently(frame_paths);
+        auto concurrent_end = std::chrono::high_resolution_clock::now();
+        auto concurrent_duration = std::chrono::duration_cast<std::chrono::milliseconds>(concurrent_end - concurrent_start).count();
+
+        std::cout << "并发帧处理耗时: " << concurrent_duration / 1000.0 << " 秒" << std::endl;
 
         // 如果关键帧数量为0 ,避免出现无结果，使用采样方法补充到5帧
         max_frames = 3;
@@ -310,23 +440,15 @@ std::vector<std::string> VideoKeyframeAnalyzer::extract_keyframes(const std::str
                 // 执行命令
                 execute_command(cmd);
 
-                // 读取提取的采样帧并转换为base64
-                for (const auto &sample_path : sample_paths)
-                {
-                    if (std::filesystem::exists(sample_path))
-                    {
-                        // 读取图像并转换为base64
-                        cv::Mat frame = cv::imread(sample_path);
-                        if (!frame.empty())
-                        {
-                            // 调整图像大小以控制数据量
-                            cv::Mat resized_frame = utils::resize_image(frame, 800);
+                // 使用并发处理这些采样帧
+                std::vector<std::string> sample_frames = process_frames_concurrently(sample_paths);
 
-                            // 编码为JPEG并转换为base64
-                            auto jpeg_data = utils::encode_image_to_jpeg(resized_frame, 85);
-                            std::string frame_base64 = utils::base64_encode(jpeg_data);
-                            frames_base64.push_back(frame_base64);
-                        }
+                // 将处理好的采样帧添加到结果中
+                for (const auto &frame : sample_frames)
+                {
+                    if (!frame.empty())
+                    {
+                        frames_base64.push_back(frame);
                     }
                 }
             }
@@ -335,39 +457,45 @@ std::vector<std::string> VideoKeyframeAnalyzer::extract_keyframes(const std::str
         std::cout << "成功提取 " << frames_base64.size() << " 个关键帧" << std::endl;
 
         // 获取视频元数据和关键帧总数
-        try {
+        try
+        {
             VideoMetadata metadata = get_video_metadata(video_url);
-            if (metadata.total_frames > 0) {
-                // 获取视频中的关键帧总数
-                std::string cmd = "ffprobe -v error -select_streams v:0 -show_entries "
-                                "frame=pict_type -of csv \"" + video_url + "\"";
-                std::string result = execute_command(cmd);
+            if (metadata.total_frames > 0)
+            {
+                // // 获取视频中的关键帧总数
+                // std::string cmd = "ffprobe -v error -skip_frame nokey -select_streams v:0 -show_entries "
+                //                   "frame=key_frame -of csv\"" +
+                //                   video_url + "\"";
+                // std::string result = execute_command(cmd);
 
-                // 计算关键帧总数
-                int total_keyframes = 0;
-                std::istringstream iss(result);
-                std::string line;
-                while (std::getline(iss, line)) {
-                    if (line.find("I") != std::string::npos) {
-                        total_keyframes++;
-                    }
-                }
+                // // 计算关键帧总数
+                // int total_keyframes = 0;
+                // std::istringstream iss(result);
+                // std::string line;
+                // while (std::getline(iss, line))
+                // {
+                //     if (line.find("I") != std::string::npos)
+                //     {
+                //         total_keyframes++;
+                //     }
+                // }
 
                 // 计算比例
                 double keyframe_ratio = (static_cast<double>(frames_base64.size()) / metadata.total_frames) * 100;
-                double extracted_ratio = total_keyframes > 0 ? 
-                    (static_cast<double>(frames_base64.size()) / total_keyframes) * 100 : 0;
+                // double extracted_ratio = total_keyframes > 0 ? (static_cast<double>(frames_base64.size()) / total_keyframes) * 100 : 0;
 
                 // 输出统计信息
                 std::cout << "📊 [统计] 视频总帧数: " << metadata.total_frames << std::endl;
-                std::cout << "📊 [统计] 关键帧总数: " << total_keyframes << std::endl;
+                // std::cout << "📊 [统计] 关键帧总数: " << total_keyframes << std::endl;
                 std::cout << "📊 [统计] 抽取关键帧数: " << frames_base64.size() << std::endl;
-                std::cout << "📊 [统计] 抽取帧占总帧数比例: " << std::fixed << std::setprecision(2) 
+                std::cout << "📊 [统计] 抽取帧占总帧数比例: " << std::fixed << std::setprecision(2)
                           << keyframe_ratio << "%" << std::endl;
-                std::cout << "📊 [统计] 抽取帧占关键帧总数比例: " << std::fixed << std::setprecision(2) 
-                          << extracted_ratio << "%" << std::endl;
+                // std::cout << "📊 [统计] 抽取帧占关键帧总数比例: " << std::fixed << std::setprecision(2)
+                //           << extracted_ratio << "%" << std::endl;
             }
-        } catch (const std::exception &e) {
+        }
+        catch (const std::exception &e)
+        {
             std::cerr << "获取视频元数据失败: " << e.what() << std::endl;
         }
     }
@@ -425,25 +553,13 @@ std::vector<std::string> VideoKeyframeAnalyzer::extract_sample_frames(const std:
         // 执行命令
         execute_command(cmd);
 
-        // 读取提取的帧并转换为base64
-        for (const auto &frame_path : frame_paths)
-        {
-            if (std::filesystem::exists(frame_path))
-            {
-                // 读取图像并转换为base64
-                cv::Mat frame = cv::imread(frame_path);
-                if (!frame.empty())
-                {
-                    // 调整图像大小以控制数据量
-                    cv::Mat resized_frame = utils::resize_image(frame, 800);
+        // 使用并发处理这些采样帧
+        auto concurrent_start = std::chrono::high_resolution_clock::now();
+        frames_base64 = process_frames_concurrently(frame_paths);
+        auto concurrent_end = std::chrono::high_resolution_clock::now();
+        auto concurrent_duration = std::chrono::duration_cast<std::chrono::milliseconds>(concurrent_end - concurrent_start).count();
 
-                    // 编码为JPEG并转换为base64
-                    auto jpeg_data = utils::encode_image_to_jpeg(resized_frame, 85);
-                    std::string frame_base64 = utils::base64_encode(jpeg_data);
-                    frames_base64.push_back(frame_base64);
-                }
-            }
-        }
+        std::cout << "并发采样帧处理耗时: " << concurrent_duration / 1000.0 << " 秒" << std::endl;
 
         std::cout << "成功提取 " << frames_base64.size() << " 个采样帧" << std::endl;
     }

@@ -20,10 +20,45 @@
 
 // 从main.cpp中提取的提示词函数
 // https://www.json.cn/jsonzip/ 压缩并转义 的在线工具
+
+std::string get_image_prompt()
+{
+    return R"(请仔细观察图片内容，为图片生成全面的标签分析。要求：
+1. 仔细观察图片的各个细节，包括主体、背景、颜色、风格、情感等
+2. 生成最多3组不同的标签体系，每组包含4级分类，从概括到具体
+3. 每组标签体系应从不同角度分析图片，如：内容主题、视觉风格、情感表达等
+4. 请严格按照以下四级标签体系对图片进行分类：
+ 一级标签：选择最概括的主类别
+ 二级标签：在一级标签下选择更具体的子类别
+ 三级标签：在二级标签下选择更详细的分类
+ 四级标签：在三级标签下选择最精准的描述性标签
+5. 输出格式：
+第一组标签分析：['一级标签', '二级标签', '三级标签', '四级标签']
+第二组标签分析：['一级标签', '二级标签', '三级标签', '四级标签']
+第三组标签分析：['一级标签', '二级标签', '三级标签', '四级标签'])";
+}
+
+std::string get_video_prompt()
+{
+    return R"(请仔细观察视频的关键帧内容，为视频生成全面的标签分析。要求：
+1. 综合分析视频的整体内容、关键帧、场景变化、动作序列等
+2. 生成最多3组不同的标签体系，每组包含4级分类，从概括到具体
+3. 每组标签体系应从不同角度分析视频，如：内容主题、视觉风格、叙事结构等
+4. 请严格按照以下四级标签体系对视频进行分类：
+ 一级标签：选择最概括的主类别
+ 二级标签：在一级标签下选择更具体的子类别
+ 三级标签：在二级标签下选择更详细的分类
+ 四级标签：在三级标签下选择最精准的描述性标签
+5. 输出格式：
+第一组标签分析：['一级标签', '二级标签', '三级标签', '四级标签']
+第二组标签分析：['一级标签', '二级标签', '三级标签', '四级标签']
+第三组标签分析：['一级标签', '二级标签', '三级标签', '四级标签'])";
+}
+
 /*
 (请仔细观察内容（图片/视频），为其生成合适的标签。要求：1.仔细观察内容的各个细节和关键帧2.生成的标签要准确反映内容的主题、场景、动作等3.请严格按照以下优先级顺序对内容进行分类（按顺序匹配，一旦匹配就不再继续）：-VM创意秀-五运六气-健康生活-全球视野-合香珠-皇室驼奶-广场舞-骨力满满-慢病管理-厨房魔法屋-免疫超人-TIENS33-VM操作引导-反诈宣传-活力日常4.分类规则：-按照上述顺序依次检查内容是否符合每个类别-一旦找到匹配的类别，立即确定为主类别，不再继续检查后续类别-在确定主类别后，生成相应的二级和三级标签5.输出格式：通过分析，生成的标签为：['主类别','具体分类','详细描述']6.注意事项：-严格按照优先级顺序进行分类-确保标签准确反映内容的具体情况-即使内容可能符合多个类别，也只选择最先匹配的类别-对于视频内容，要综合考虑所有关键帧的整体情况)
 */
-std::string get_image_prompt()
+std::string get_image_prompth()
 {
     return R"(请仔细观察内容（图片/视频），为其生成合适的标签。要求：
 1. 仔细观察内容的各个细节和关键帧
@@ -58,7 +93,7 @@ std::string get_image_prompt()
    - 对于视频内容，要综合考虑所有关键帧的整体情况)";
 }
 
-std::string get_video_prompt()
+std::string get_video_prompth()
 {
     return R"(请仔细观察内容（图片/视频），为其生成合适的标签。要求：
 1. 仔细观察内容的各个细节和关键帧
@@ -295,18 +330,48 @@ std::string get_video_promptc()
 }
 
 ApiServer::ApiServer(const std::string &api_key, int port, const std::string &host)
-    : api_key_(api_key), port_(port), host_(host)
+    : api_key_(api_key), port_(port), host_(host), server_running_(false), max_concurrent_requests_(50)
 {
     // 初始化分析器
     analyzer_ = std::make_unique<DoubaoMediaAnalyzer>(api_key);
 
-    // 初始化任务管理器（使用4个工作线程）调用大模型需要传递 api_key 提高线程16
+    // 初始化任务管理器（使用16个工作线程）调用大模型需要传递 api_key
     TaskManager::getInstance().initialize(16, api_key);
+
+    // 初始化并发请求处理
+    server_running_ = true;
+
+    // 创建请求处理工作线程
+    size_t num_threads = std::thread::hardware_concurrency();
+    if (num_threads == 0)
+        num_threads = 8; // 默认使用8个线程
+
+    std::cout << "🚀 初始化API服务器并发处理，使用 " << num_threads << " 个工作线程" << std::endl;
+
+    for (size_t i = 0; i < num_threads; ++i)
+    {
+        worker_threads_.emplace_back(&ApiServer::request_worker_thread, this);
+    }
 }
 
 ApiServer::~ApiServer()
 {
     stop();
+
+    // 停止并发请求处理
+    server_running_ = false;
+    queue_condition_.notify_all();
+
+    // 等待所有工作线程结束
+    for (auto &thread : worker_threads_)
+    {
+        if (thread.joinable())
+        {
+            thread.join();
+        }
+    }
+
+    std::cout << "🛑 所有API服务器工作线程已停止" << std::endl;
 }
 
 bool ApiServer::initialize()
@@ -339,7 +404,7 @@ bool ApiServer::initialize()
 
 void ApiServer::start()
 {
-    int server_fd, new_socket;
+    int server_fd;
     struct sockaddr_in address;
     int opt = 1;
     int addrlen = sizeof(address);
@@ -370,7 +435,7 @@ void ApiServer::start()
     }
 
     // 监听连接
-    if (listen(server_fd, 3) < 0)
+    if (listen(server_fd, 128) < 0) // 增加监听队列大小
     {
         std::cerr << "❌ 监听失败: " << strerror(errno) << std::endl;
         return;
@@ -386,25 +451,103 @@ void ApiServer::start()
     std::cout << "   - POST /api/excel_analyze : 分析Excel文件中的媒体URL" << std::endl;
     std::cout << "   - POST /api/query : 查询已分析的结果" << std::endl;
     std::cout << "   - GET /api/status : 获取服务器状态" << std::endl;
+    std::cout << "🔄 服务器已启用并发处理，最大并发连接数: " << max_concurrent_requests_ << std::endl;
 
-    // 主循环，接受和处理连接
+    // 主循环，接受连接
     while (true)
     {
+        int new_socket;
         if ((new_socket = accept(server_fd, (struct sockaddr *)&address, (socklen_t *)&addrlen)) < 0)
         {
             std::cerr << "❌ 接受连接失败: " << strerror(errno) << std::endl;
             continue;
         }
 
-        std::cout << "✅ 接受新连接" << std::endl;
+        std::cout << "✅ 接受新连接，socket: " << new_socket << std::endl;
 
+        // 检查当前并发请求数是否超过限制
+        {
+            std::unique_lock<std::mutex> lock(queue_mutex_);
+            if (request_queue_.size() >= max_concurrent_requests_)
+            {
+                std::cerr << "⚠️ 服务器繁忙，并发请求数已达上限: " << max_concurrent_requests_ << std::endl;
+
+                // 发送服务器繁忙响应
+                std::string busy_response = "HTTP/1.1 503 Service Unavailable\r\n";
+                busy_response += "Content-Type: application/json\r\n";
+                busy_response += "Content-Length: 85\r\n";
+                busy_response += "\r\n";
+                busy_response += "{\"success\":false,\"message\":\"服务器繁忙，请稍后再试\",\"error\":\"Service Unavailable\"}";
+
+                send(new_socket, busy_response.c_str(), busy_response.length(), 0);
+                close(new_socket);
+                continue;
+            }
+        }
+
+        // 将连接处理任务添加到队列
+        {
+            std::unique_lock<std::mutex> lock(queue_mutex_);
+            request_queue_.push([this, new_socket]()
+                                { handle_connection(new_socket); });
+        }
+
+        // 通知工作线程有新请求
+        queue_condition_.notify_one();
+
+        // 请求处理已移至handle_connection函数，由工作线程并发处理
+    }
+}
+
+void ApiServer::stop()
+{
+    std::cout << "🛑 API服务器已停止" << std::endl;
+}
+
+void ApiServer::request_worker_thread()
+{
+    while (server_running_)
+    {
+        std::function<void()> request_handler;
+
+        {
+            std::unique_lock<std::mutex> lock(queue_mutex_);
+            queue_condition_.wait(lock, [this]
+                                  { return !server_running_ || !request_queue_.empty(); });
+
+            if (!server_running_)
+                break;
+
+            if (request_queue_.empty())
+                continue;
+
+            request_handler = std::move(request_queue_.front());
+            request_queue_.pop();
+        }
+
+        // 执行请求处理
+        try
+        {
+            request_handler();
+        }
+        catch (const std::exception &e)
+        {
+            std::cerr << "❌ 请求处理异常: " << e.what() << std::endl;
+        }
+    }
+}
+
+void ApiServer::handle_connection(int client_socket)
+{
+    try
+    {
         // 读取请求
         char buffer[4096] = {0};
-        int valread = read(new_socket, buffer, 4096);
+        int valread = read(client_socket, buffer, 4096);
         if (valread <= 0)
         {
-            close(new_socket);
-            continue;
+            close(client_socket);
+            return;
         }
 
         std::string request(buffer);
@@ -424,7 +567,7 @@ void ApiServer::start()
                 request_path = request.substr(path_start + 1, path_end - path_start - 1);
             }
         }
-        size_t body_start = request.find("\r\n\r\n");
+        size_t body_start = request.find("\r\n\r\n"); // 而不是被截断的版本
         if (body_start != std::string::npos)
         {
             request_body = request.substr(body_start + 4);
@@ -460,6 +603,7 @@ void ApiServer::start()
             size_t auth_pos = headers.find("Authorization:");
             if (auth_pos != std::string::npos)
             {
+                // 修复Authorization头查找
                 size_t line_end = headers.find("\r\n", auth_pos);
                 if (line_end == std::string::npos)
                     line_end = headers.length();
@@ -469,9 +613,9 @@ void ApiServer::start()
                 {
                     auth_header = line.substr(colon + 1);
                     // trim
-                    while (!auth_header.empty() && (auth_header.front() == ' ' || auth_header.front() == '\t'))
+                    while (!auth_header.empty() && (auth_header.front() == ' ' || auth_header.front() == '	'))
                         auth_header.erase(0, 1);
-                    while (!auth_header.empty() && (auth_header.back() == '\r' || auth_header.back() == '\n' || auth_header.back() == ' '))
+                    while (!auth_header.empty() && (auth_header.back() == ' ' || auth_header.back() == ' ' || auth_header.back() == ' '))
                         auth_header.pop_back();
                 }
             }
@@ -497,7 +641,7 @@ void ApiServer::start()
         // 构建HTTP响应（若未经授权则返回401）
         std::string http_response;
         if (response.error == "Unauthorized")
-            http_response = "HTTP/1.1 401 Unauthorized\r\n";
+            http_response = "HTTP/1.1 401 Unauthorized\r\n"; // 确保有完整的\r\n
         else
             http_response = "HTTP/1.1 200 OK\r\n";
         http_response += "Content-Type: application/json\r\n";
@@ -505,16 +649,16 @@ void ApiServer::start()
         http_response += "\r\n";
         http_response += response_json;
 
-        send(new_socket, http_response.c_str(), http_response.length(), 0);
+        send(client_socket, http_response.c_str(), http_response.length(), 0);
         std::cout << "📤 发送响应: " << response_json << std::endl;
 
-        close(new_socket);
+        close(client_socket);
     }
-}
-
-void ApiServer::stop()
-{
-    std::cout << "🛑 API服务器已停止" << std::endl;
+    catch (const std::exception &e)
+    {
+        std::cerr << "❌ 处理连接异常: " << e.what() << std::endl;
+        close(client_socket);
+    }
 }
 
 ApiResponse ApiServer::process_request(const std::string &request_json, const std::string &path, const std::string &auth_header)
