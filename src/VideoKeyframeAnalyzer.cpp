@@ -324,21 +324,88 @@ std::string VideoKeyframeAnalyzer::process_single_frame(const std::string &frame
         return "";
     }
 }
+// 20251204 add  根据视频编码格式和时长生成优化的提取命令
+std::string get_optimized_extract_cmd(
+    const std::string &video_url,
+    const std::string &codec,
+    int max_frames,
+    const std::string &output_pattern,
+    double video_duration = 0)
+{
+    int available_threads = std::min(8, static_cast<int>(std::thread::hardware_concurrency()));
 
-std::vector<std::string> VideoKeyframeAnalyzer::extract_keyframes(const std::string &video_url,
-                                                                  int max_frames,
-                                                                  const std::string &output_format)
+    std::stringstream cmd;
+    cmd << "ffmpeg -threads " << available_threads << " ";
+
+    // 根据视频时长动态调整采样策略
+    std::string filter;
+    if (video_duration > 300)
+    { // 长视频 > 5分钟
+        if (codec == "hevc" || codec == "h265")
+        {
+            filter = "select='gt(scene,0.12)+eq(pict_type,I)+not(mod(n,60))', ";
+        }
+        else
+        {
+            filter = "select='eq(pict_type,I)+not(mod(n,50))+gt(scene,0.15)', ";
+        }
+    }
+    else if (video_duration > 120)
+    { // 中视频 2-5分钟
+        if (codec == "hevc" || codec == "h265")
+        {
+            filter = "select='gt(scene,0.15)+eq(pict_type,I)+not(mod(n,30))', ";
+        }
+        else
+        {
+            filter = "select='eq(pict_type,I)+not(mod(n,25))+gt(scene,0.2)', ";
+        }
+    }
+    else
+    { // 短视频 < 2分钟
+        if (codec == "hevc" || codec == "h265")
+        {
+            filter = "select='gt(scene,0.2)+eq(pict_type,I)+not(mod(n,15))', ";
+        }
+        else
+        {
+            filter = "select='eq(pict_type,I)+not(mod(n,10))+gt(scene,0.25)', ";
+        }
+    }
+
+    // 智能缩放和填充，保持宽高比
+    filter += "scale='min(384,iw):min(384,ih)':"
+              "force_original_aspect_ratio=decrease,"
+              "pad=384:384:(ow-iw)/2:(oh-ih)/2:color=black";
+
+    // 硬件加速和输出选项
+    cmd << "-hwaccel cuda "
+        << "-extra_hw_frames 2 "
+        << "-i \"" << video_url << "\" "
+        << "-vf \"" << filter << "\" "
+        << "-vsync vfr "
+        << "-frames:v " << max_frames << " "
+        << "-q:v 1 "          // 高质量JPEG
+        << "-loglevel error " // 只显示错误
+        << "-stats "          // 显示进度统计
+        << "-y \"" << output_pattern << "\"";
+
+    return cmd.str();
+}
+
+std::vector<std::string> VideoKeyframeAnalyzer::extract_keyframes(
+    const std::string &video_url,
+    int max_frames,
+    const std::string &output_format)
 {
     std::vector<std::string> frames_base64;
 
     try
     {
-        // 移除帧数限制，允许根据参数动态调整
-        //
         // 创建临时输出文件路径
         std::string output_pattern = temp_dir_ + "/keyframe_%03d." + output_format;
 
-        // 先获取视频编码格式
+        // 先获取视频编码格式和元数据
         std::string codec_check_cmd = "ffprobe -v error -select_streams v:0 -show_entries stream=codec_name -of csv \"" + video_url + "\"";
         std::string codec_result = execute_command(codec_check_cmd);
         std::string codec = "";
@@ -353,66 +420,20 @@ std::vector<std::string> VideoKeyframeAnalyzer::extract_keyframes(const std::str
             codec = "hevc";
         }
 
-        std::string cmd;
+        // 获取视频元数据
+        VideoMetadata metadata = get_video_metadata(video_url);
 
-        // // 根据编码格式选择不同的提取策略
-        // if (codec == "hevc")
-        // {
-        //     // HEVC编码使用场景变化检测 + 固定间隔采样
-        //     cmd = "ffmpeg -threads 4 -thread_type frame+slice -hwaccel auto -i \"" + video_url + "\" -vf \"select=gt(scene\\\\,0.3)+eq(n\\\\,2)\" "
-        //                                                                                          "-vsync vfr -frames:v " +
-        //           std::to_string(max_frames) +
-        //           " -q:v 2 -y \"" + output_pattern + "\"";
-        // }
-        // else
-        // {
-        //     // H.264等其他编码使用关键帧检测 fmpeg命令需要添加scale参数，ffmpeg命令中添加 scale=384:384
-        //     // 质量参数-q:v从3改为 2
-        //     cmd = "ffmpeg -threads 4 -thread_type frame+slice -hwaccel auto -i \"" + video_url + "\" -vf \"select=eq(pict_type\\\\,I),scale=384:384\" "
-        //                                                                                          "-vsync vfr -frames:v " +
-        //           std::to_string(max_frames) +
-        //           " -q:v 2 -y \"" + output_pattern + "\"";
-        // }
-        // 2025-12-04 根据编码格式选择不同的提取策略
-        if (codec == "hevc" || codec == "h265")
-        {
-            // HEVC编码：混合策略（场景变化 + 关键帧 + 时间均匀）
-            cmd = "ffmpeg -threads 8 " // 增加线程数
-                  "-hwaccel cuda "     // 明确指定硬件加速（如果支持）
-                  "-i \"" +
-                  video_url + "\" "
-                              "-vf \""
-                              "select='gt(scene,0.2)+eq(pict_type,I)+not(mod(n,15))', "                 // 场景变化(0.2更敏感) + 关键帧 + 每15帧取1帧
-                              "scale='min(384,iw):min(384,ih)':force_original_aspect_ratio=decrease\" " // 智能缩放
-                              "-vsync vfr "
-                              "-frames:v " +
-                  std::to_string(max_frames) + " "
-                                               "-q:v 1 "            // 提高质量
-                                               "-loglevel warning " // 减少日志输出
-                                               "-y "
-                                               "\"" +
-                  output_pattern + "\"";
-        }
-        else
-        {
-            // H.264及其他编码：关键帧 + 时间采样 + 场景检测
-            cmd = "ffmpeg -threads 8 "
-                  "-hwaccel auto "
-                  "-i \"" +
-                  video_url + "\" "
-                              "-vf \""
-                              "select='eq(pict_type,I)+not(mod(n,10))+gt(scene,0.25)', "                              // 关键帧 + 每25帧 + 场景变化
-                              "scale='min(384,iw):min(384,ih)':force_original_aspect_ratio=decrease:flags=lanczos\" " // 高质量缩放
-                              "-vsync vfr "
-                              "-frames:v " +
-                  std::to_string(max_frames) + " "
-                                               "-q:v 1 "
-                                               "-loglevel warning "
-                                               "-y "
-                                               "\"" +
-                  output_pattern + "\"";
-        }
+        // 根据视频时长和编码格式构建优化命令
+        std::string cmd = get_optimized_extract_cmd(
+            video_url, codec, max_frames, output_pattern, metadata.duration);
+
+        // 执行命令并计时
+        auto start_time = std::chrono::high_resolution_clock::now();
         execute_command(cmd);
+        auto end_time = std::chrono::high_resolution_clock::now();
+        auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time).count();
+
+        std::cout << "⏱️ [耗时] 帧提取耗时: " << duration / 1000.0 << " 秒" << std::endl;
 
         // 收集所有提取的帧文件路径
         std::vector<std::string> frame_paths;
@@ -435,20 +456,15 @@ std::vector<std::string> VideoKeyframeAnalyzer::extract_keyframes(const std::str
 
         std::cout << "并发帧处理耗时: " << concurrent_duration / 1000.0 << " 秒" << std::endl;
 
-        // 如果关键帧数量为0 ,避免出现无结果，使用采样方法补充到5帧
-        max_frames = 3;
-        //
-        if (frames_base64.size() == 0)
+        // 如果关键帧数量不足，使用采样方法补充
+        if (frames_base64.size() < 3)
         {
-            std::cout << "关键帧数量不足(" << frames_base64.size() << ")，使用采样方法补充到" << max_frames << "帧" << std::endl;
-
-            // 获取视频元数据
-            VideoMetadata metadata = get_video_metadata(video_url);
+            std::cout << "关键帧数量不足(" << frames_base64.size() << ")，使用采样方法补充到3帧" << std::endl;
 
             if (metadata.duration > 0)
             {
                 // 计算需要补充的帧数
-                int remaining_frames = max_frames - frames_base64.size();
+                int remaining_frames = 3 - frames_base64.size();
 
                 // 计算采样间隔
                 double interval = metadata.duration / (remaining_frames + 1);
@@ -464,19 +480,20 @@ std::vector<std::string> VideoKeyframeAnalyzer::extract_keyframes(const std::str
                 }
 
                 // 构建FFmpeg命令
-                std::string cmd = "ffmpeg -i \"" + video_url + "\"";
+                std::string sample_cmd = "ffmpeg -hwaccel cuda -i \"" + video_url + "\"";
 
                 // 添加采样时间点
                 for (int i = 0; i < remaining_frames; ++i)
                 {
                     double timestamp = (i + 1) * interval;
-                    cmd += " -ss " + std::to_string(timestamp) + " -vframes 1 \"" + sample_paths[i] + "\"";
+                    sample_cmd += " -ss " + std::to_string(timestamp) +
+                                  " -vframes 1 \"" + sample_paths[i] + "\"";
                 }
 
-                cmd += " -y";
+                sample_cmd += " -y";
 
                 // 执行命令
-                execute_command(cmd);
+                execute_command(sample_cmd);
 
                 // 使用并发处理这些采样帧
                 std::vector<std::string> sample_frames = process_frames_concurrently(sample_paths);
@@ -494,47 +511,15 @@ std::vector<std::string> VideoKeyframeAnalyzer::extract_keyframes(const std::str
 
         std::cout << "成功提取 " << frames_base64.size() << " 个关键帧" << std::endl;
 
-        // 获取视频元数据和关键帧总数
-        try
+        // 输出统计信息
+        if (metadata.total_frames > 0)
         {
-            VideoMetadata metadata = get_video_metadata(video_url);
-            if (metadata.total_frames > 0)
-            {
-                // // 获取视频中的关键帧总数
-                // std::string cmd = "ffprobe -v error -skip_frame nokey -select_streams v:0 -show_entries "
-                //                   "frame=key_frame -of csv\"" +
-                //                   video_url + "\"";
-                // std::string result = execute_command(cmd);
+            double keyframe_ratio = (static_cast<double>(frames_base64.size()) / metadata.total_frames) * 100;
 
-                // // 计算关键帧总数
-                // int total_keyframes = 0;
-                // std::istringstream iss(result);
-                // std::string line;
-                // while (std::getline(iss, line))
-                // {
-                //     if (line.find("I") != std::string::npos)
-                //     {
-                //         total_keyframes++;
-                //     }
-                // }
-
-                // 计算比例
-                double keyframe_ratio = (static_cast<double>(frames_base64.size()) / metadata.total_frames) * 100;
-                // double extracted_ratio = total_keyframes > 0 ? (static_cast<double>(frames_base64.size()) / total_keyframes) * 100 : 0;
-
-                // 输出统计信息
-                std::cout << "📊 [统计] 视频总帧数: " << metadata.total_frames << std::endl;
-                // std::cout << "📊 [统计] 关键帧总数: " << total_keyframes << std::endl;
-                std::cout << "📊 [统计] 抽取关键帧数: " << frames_base64.size() << std::endl;
-                std::cout << "📊 [统计] 抽取帧占总帧数比例: " << std::fixed << std::setprecision(2)
-                          << keyframe_ratio << "%" << std::endl;
-                // std::cout << "📊 [统计] 抽取帧占关键帧总数比例: " << std::fixed << std::setprecision(2)
-                //           << extracted_ratio << "%" << std::endl;
-            }
-        }
-        catch (const std::exception &e)
-        {
-            std::cerr << "获取视频元数据失败: " << e.what() << std::endl;
+            std::cout << "📊 [统计] 视频总帧数: " << metadata.total_frames << std::endl;
+            std::cout << "📊 [统计] 抽取关键帧数: " << frames_base64.size() << std::endl;
+            std::cout << "📊 [统计] 抽取帧占总帧数比例: " << std::fixed << std::setprecision(2)
+                      << keyframe_ratio << "%" << std::endl;
         }
     }
     catch (const std::exception &e)
@@ -544,6 +529,227 @@ std::vector<std::string> VideoKeyframeAnalyzer::extract_keyframes(const std::str
 
     return frames_base64;
 }
+// old version bak
+// std::vector<std::string> VideoKeyframeAnalyzer::extract_keyframes(const std::string &video_url,
+//                                                                   int max_frames,
+//                                                                   const std::string &output_format)
+// {
+//     std::vector<std::string> frames_base64;
+
+//     try
+//     {
+//         // 移除帧数限制，允许根据参数动态调整
+//         //
+//         // 创建临时输出文件路径
+//         std::string output_pattern = temp_dir_ + "/keyframe_%03d." + output_format;
+
+//         // 先获取视频编码格式
+//         std::string codec_check_cmd = "ffprobe -v error -select_streams v:0 -show_entries stream=codec_name -of csv \"" + video_url + "\"";
+//         std::string codec_result = execute_command(codec_check_cmd);
+//         std::string codec = "";
+
+//         // 解析编码格式
+//         if (codec_result.find("h264") != std::string::npos)
+//         {
+//             codec = "h264";
+//         }
+//         else if (codec_result.find("hevc") != std::string::npos)
+//         {
+//             codec = "hevc";
+//         }
+
+//         std::string cmd;
+
+//         // // 根据编码格式选择不同的提取策略
+//         // if (codec == "hevc")
+//         // {
+//         //     // HEVC编码使用场景变化检测 + 固定间隔采样
+//         //     cmd = "ffmpeg -threads 4 -thread_type frame+slice -hwaccel auto -i \"" + video_url + "\" -vf \"select=gt(scene\\\\,0.3)+eq(n\\\\,2)\" "
+//         //                                                                                          "-vsync vfr -frames:v " +
+//         //           std::to_string(max_frames) +
+//         //           " -q:v 2 -y \"" + output_pattern + "\"";
+//         // }
+//         // else
+//         // {
+//         //     // H.264等其他编码使用关键帧检测 fmpeg命令需要添加scale参数，ffmpeg命令中添加 scale=384:384
+//         //     // 质量参数-q:v从3改为 2
+//         //     cmd = "ffmpeg -threads 4 -thread_type frame+slice -hwaccel auto -i \"" + video_url + "\" -vf \"select=eq(pict_type\\\\,I),scale=384:384\" "
+//         //                                                                                          "-vsync vfr -frames:v " +
+//         //           std::to_string(max_frames) +
+//         //           " -q:v 2 -y \"" + output_pattern + "\"";
+//         // }
+//         // 2025-12-04 根据编码格式选择不同的提取策略
+//         if (codec == "hevc" || codec == "h265")
+//         {
+//             // HEVC编码：混合策略（场景变化 + 关键帧 + 时间均匀）
+//             cmd = "ffmpeg -threads 8 " // 增加线程数
+//                   "-hwaccel cuda "     // 明确指定硬件加速（如果支持）
+//                   "-i \"" +
+//                   video_url + "\" "
+//                               "-vf \""
+//                               "select='gt(scene,0.2)+eq(pict_type,I)+not(mod(n,15))', "                 // 场景变化(0.2更敏感) + 关键帧 + 每15帧取1帧
+//                               "scale='min(384,iw):min(384,ih)':force_original_aspect_ratio=decrease\" " // 智能缩放
+//                               "-vsync vfr "
+//                               "-frames:v " +
+//                   std::to_string(max_frames) + " "
+//                                                "-q:v 1 "            // 提高质量
+//                                                "-loglevel warning " // 减少日志输出
+//                                                "-y "
+//                                                "\"" +
+//                   output_pattern + "\"";
+//         }
+//         else
+//         {
+//             // H.264及其他编码：关键帧 + 时间采样 + 场景检测
+//             cmd = "ffmpeg -threads 8 "
+//                   "-hwaccel auto "
+//                   "-i \"" +
+//                   video_url + "\" "
+//                               "-vf \""
+//                               "select='eq(pict_type,I)+not(mod(n,10))+gt(scene,0.25)', "                              // 关键帧 + 每25帧 + 场景变化
+//                               "scale='min(384,iw):min(384,ih)':force_original_aspect_ratio=decrease:flags=lanczos\" " // 高质量缩放
+//                               "-vsync vfr "
+//                               "-frames:v " +
+//                   std::to_string(max_frames) + " "
+//                                                "-q:v 1 "
+//                                                "-loglevel warning "
+//                                                "-y "
+//                                                "\"" +
+//                   output_pattern + "\"";
+//         }
+//         execute_command(cmd);
+
+//         // 收集所有提取的帧文件路径
+//         std::vector<std::string> frame_paths;
+//         for (int i = 1; i <= max_frames; ++i)
+//         {
+//             std::string frame_path = temp_dir_ + "/keyframe_" +
+//                                      (i < 10 ? "00" : (i < 100 ? "0" : "")) +
+//                                      std::to_string(i) + "." + output_format;
+//             if (std::filesystem::exists(frame_path))
+//             {
+//                 frame_paths.push_back(frame_path);
+//             }
+//         }
+
+//         // 使用并发处理这些帧
+//         auto concurrent_start = std::chrono::high_resolution_clock::now();
+//         frames_base64 = process_frames_concurrently(frame_paths);
+//         auto concurrent_end = std::chrono::high_resolution_clock::now();
+//         auto concurrent_duration = std::chrono::duration_cast<std::chrono::milliseconds>(concurrent_end - concurrent_start).count();
+
+//         std::cout << "并发帧处理耗时: " << concurrent_duration / 1000.0 << " 秒" << std::endl;
+
+//         // 如果关键帧数量为0 ,避免出现无结果，使用采样方法补充到5帧
+//         max_frames = 3;
+//         //
+//         if (frames_base64.size() == 0)
+//         {
+//             std::cout << "关键帧数量不足(" << frames_base64.size() << ")，使用采样方法补充到" << max_frames << "帧" << std::endl;
+
+//             // 获取视频元数据
+//             VideoMetadata metadata = get_video_metadata(video_url);
+
+//             if (metadata.duration > 0)
+//             {
+//                 // 计算需要补充的帧数
+//                 int remaining_frames = max_frames - frames_base64.size();
+
+//                 // 计算采样间隔
+//                 double interval = metadata.duration / (remaining_frames + 1);
+
+//                 // 为每个采样点创建临时文件路径
+//                 std::vector<std::string> sample_paths;
+//                 for (int i = 1; i <= remaining_frames; ++i)
+//                 {
+//                     std::string sample_path = temp_dir_ + "/sample_" +
+//                                               (i < 10 ? "00" : (i < 100 ? "0" : "")) +
+//                                               std::to_string(i) + ".jpg";
+//                     sample_paths.push_back(sample_path);
+//                 }
+
+//                 // 构建FFmpeg命令
+//                 std::string cmd = "ffmpeg -i \"" + video_url + "\"";
+
+//                 // 添加采样时间点
+//                 for (int i = 0; i < remaining_frames; ++i)
+//                 {
+//                     double timestamp = (i + 1) * interval;
+//                     cmd += " -ss " + std::to_string(timestamp) + " -vframes 1 \"" + sample_paths[i] + "\"";
+//                 }
+
+//                 cmd += " -y";
+
+//                 // 执行命令
+//                 execute_command(cmd);
+
+//                 // 使用并发处理这些采样帧
+//                 std::vector<std::string> sample_frames = process_frames_concurrently(sample_paths);
+
+//                 // 将处理好的采样帧添加到结果中
+//                 for (const auto &frame : sample_frames)
+//                 {
+//                     if (!frame.empty())
+//                     {
+//                         frames_base64.push_back(frame);
+//                     }
+//                 }
+//             }
+//         }
+
+//         std::cout << "成功提取 " << frames_base64.size() << " 个关键帧" << std::endl;
+
+//         // 获取视频元数据和关键帧总数
+//         try
+//         {
+//             VideoMetadata metadata = get_video_metadata(video_url);
+//             if (metadata.total_frames > 0)
+//             {
+//                 // // 获取视频中的关键帧总数
+//                 // std::string cmd = "ffprobe -v error -skip_frame nokey -select_streams v:0 -show_entries "
+//                 //                   "frame=key_frame -of csv\"" +
+//                 //                   video_url + "\"";
+//                 // std::string result = execute_command(cmd);
+
+//                 // // 计算关键帧总数
+//                 // int total_keyframes = 0;
+//                 // std::istringstream iss(result);
+//                 // std::string line;
+//                 // while (std::getline(iss, line))
+//                 // {
+//                 //     if (line.find("I") != std::string::npos)
+//                 //     {
+//                 //         total_keyframes++;
+//                 //     }
+//                 // }
+
+//                 // 计算比例
+//                 double keyframe_ratio = (static_cast<double>(frames_base64.size()) / metadata.total_frames) * 100;
+//                 // double extracted_ratio = total_keyframes > 0 ? (static_cast<double>(frames_base64.size()) / total_keyframes) * 100 : 0;
+
+//                 // 输出统计信息
+//                 std::cout << "📊 [统计] 视频总帧数: " << metadata.total_frames << std::endl;
+//                 // std::cout << "📊 [统计] 关键帧总数: " << total_keyframes << std::endl;
+//                 std::cout << "📊 [统计] 抽取关键帧数: " << frames_base64.size() << std::endl;
+//                 std::cout << "📊 [统计] 抽取帧占总帧数比例: " << std::fixed << std::setprecision(2)
+//                           << keyframe_ratio << "%" << std::endl;
+//                 // std::cout << "📊 [统计] 抽取帧占关键帧总数比例: " << std::fixed << std::setprecision(2)
+//                 //           << extracted_ratio << "%" << std::endl;
+//             }
+//         }
+//         catch (const std::exception &e)
+//         {
+//             std::cerr << "获取视频元数据失败: " << e.what() << std::endl;
+//         }
+//     }
+//     catch (const std::exception &e)
+//     {
+//         std::cerr << "提取关键帧失败: " << e.what() << std::endl;
+//     }
+
+//     return frames_base64;
+// }
+
 // 增加默认值 num_samples = 5
 std::vector<std::string> VideoKeyframeAnalyzer::extract_sample_frames(const std::string &video_url,
                                                                       int num_samples)
