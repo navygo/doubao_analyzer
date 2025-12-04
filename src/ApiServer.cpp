@@ -21,7 +21,7 @@
 // 从main.cpp中提取的提示词函数
 // https://www.json.cn/jsonzip/ 压缩并转义 的在线工具
 
-std::string get_image_prompt()
+std::string get_image_promptbak()
 {
     return R"(请仔细观察图片内容，为图片生成全面的标签分析。要求：
 1. 仔细观察图片的各个细节，包括主体、背景、颜色、风格、情感等
@@ -38,7 +38,7 @@ std::string get_image_prompt()
 第三组标签分析：['一级标签', '二级标签', '三级标签', '四级标签'])";
 }
 
-std::string get_video_prompt()
+std::string get_video_promptbak()
 {
     return R"(请仔细观察视频的关键帧内容，为视频生成全面的标签分析。要求：
 1. 综合分析视频的整体内容、关键帧、场景变化、动作序列等
@@ -303,7 +303,7 @@ std::string get_video_promptd()
 4. 输出格式：通过分析，生成的标签为：['一级标签', '二级标签', '三级标签'])";
 }
 
-std::string get_image_promptc()
+std::string get_image_prompt()
 {
     return R"(请仔细观察图片内容，为图片生成最合适的一组标签。要求：
 1. 仔细观察图片的各个细节，识别图片最核心要表达的内容
@@ -316,7 +316,7 @@ std::string get_image_promptc()
 ['一级标签', '二级标签', '三级标签'])";
 }
 
-std::string get_video_promptc()
+std::string get_video_prompt()
 {
     return R"(请仔细观察视频的关键帧内容，为视频生成最合适的一组标签。要求：
 1. 仔细观察图片的各个细节，识别图片最核心要表达的内容

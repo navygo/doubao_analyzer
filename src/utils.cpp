@@ -8,9 +8,16 @@
 #include <thread>
 #include <iomanip>
 #include <curl/curl.h>
+#include <filesystem>
+#include <mutex>
 
 namespace utils
 {
+    // 全局文件缓存互斥锁
+    std::mutex cache_mutex;
+
+    // URL到缓存文件路径的映射
+    std::unordered_map<std::string, std::string> url_cache;
 
     // 字符串工具
     std::string to_lower(const std::string &str)
@@ -561,9 +568,6 @@ namespace utils
     }
 
     // 文件下载工具
-    // 简单的URL缓存，避免重复下载
-    static std::unordered_map<std::string, std::string> url_cache;
-    static std::mutex cache_mutex;
 
     bool download_file(const std::string &url, const std::string &output_path)
     {
@@ -574,19 +578,37 @@ namespace utils
             if (it != url_cache.end())
             {
                 // 从缓存复制文件
-                std::ifstream src(it->second, std::ios::binary);
-                std::ofstream dst(output_path, std::ios::binary);
-                if (src && dst)
+                try
                 {
-                    dst << src.rdbuf();
-                    return true;
+                    // 检查目标文件是否已存在，如果存在则先删除
+                    if (std::filesystem::exists(output_path))
+                    {
+                        std::filesystem::remove(output_path);
+                    }
+
+                    std::ifstream src(it->second, std::ios::binary);
+                    std::ofstream dst(output_path, std::ios::binary);
+                    if (src && dst)
+                    {
+                        dst << src.rdbuf();
+                        return true;
+                    }
+                }
+                catch (const std::exception& e)
+                {
+                    std::cerr << "❌ 从缓存复制文件失败: " << e.what() << std::endl;
                 }
             }
         }
 
-        // 创建临时文件名用于缓存
-        std::string temp_path = "/tmp/download_cache_" +
-                                std::to_string(std::hash<std::string>{}(url)) + ".jpg";
+        // 创建唯一的临时文件名，避免并发冲突
+        // 使用URL哈希+线程ID+时间戳确保唯一性
+        std::string unique_id = std::to_string(std::hash<std::string>{}(url)) + "_" +
+                               std::to_string(std::hash<std::thread::id>{}(std::this_thread::get_id())) + "_" +
+                               std::to_string(std::chrono::duration_cast<std::chrono::milliseconds>(
+                                   std::chrono::high_resolution_clock::now().time_since_epoch()).count());
+
+        std::string temp_path = "/tmp/download_cache_" + unique_id + ".jpg";
 
         CURL *curl = curl_easy_init();
         if (!curl)
@@ -607,7 +629,7 @@ namespace utils
         curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, NULL);
         curl_easy_setopt(curl, CURLOPT_WRITEDATA, fp);
         curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
-        curl_easy_setopt(curl, CURLOPT_TIMEOUT, 60L); // 1分钟超时，比之前更快
+        curl_easy_setopt(curl, CURLOPT_TIMEOUT, 60L); // 1分钟超时
         curl_easy_setopt(curl, CURLOPT_NOPROGRESS, 0L);
         curl_easy_setopt(curl, CURLOPT_USERAGENT, "Mozilla/5.0");
 
@@ -626,16 +648,43 @@ namespace utils
             return false;
         }
 
-        // 复制到目标位置
-        std::filesystem::copy_file(temp_path, output_path);
-
-        // 添加到缓存
+        // 确保目标文件不存在，然后复制
+        try
         {
-            std::lock_guard<std::mutex> lock(cache_mutex);
-            url_cache[url] = temp_path;
-        }
+            if (std::filesystem::exists(output_path))
+            {
+                std::filesystem::remove(output_path);
+            }
 
-        return true;
+            std::filesystem::copy_file(temp_path, output_path);
+
+            // 添加到缓存 - 使用原始URL哈希作为缓存键，便于其他线程查找
+            std::string cache_key = "/tmp/download_cache_" + std::to_string(std::hash<std::string>{}(url)) + ".jpg";
+
+            // 如果缓存文件不存在，则将当前临时文件重命名为缓存文件
+            if (!std::filesystem::exists(cache_key))
+            {
+                std::filesystem::rename(temp_path, cache_key);
+            }
+            else
+            {
+                // 缓存文件已存在，删除临时文件
+                std::filesystem::remove(temp_path);
+            }
+
+            {
+                std::lock_guard<std::mutex> lock(cache_mutex);
+                url_cache[url] = cache_key;
+            }
+
+            return true;
+        }
+        catch (const std::exception& e)
+        {
+            std::cerr << "❌ 文件操作失败: " << e.what() << std::endl;
+            std::filesystem::remove(temp_path); // 清理临时文件
+            return false;
+        }
     }
 
     std::string get_current_timestamp()

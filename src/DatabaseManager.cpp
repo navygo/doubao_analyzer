@@ -5,6 +5,8 @@
 #include <iomanip>
 #include <chrono>
 #include <ctime>
+#include <thread>
+#include <mysql.h>
 
 DatabaseManager::DatabaseManager(const std::string &host, const std::string &user,
                                  const std::string &password, const std::string &database,
@@ -233,32 +235,90 @@ bool DatabaseManager::save_batch_results(const std::vector<MediaAnalysisRecord> 
         return true;
     }
 
-    // 开始事务
-    if (!execute_query("START TRANSACTION"))
-    {
-        return false;
-    }
+    // 最大重试次数
+    const int max_retries = 3;
+    int retry_count = 0;
 
-    try
+    while (retry_count < max_retries)
     {
-        for (const auto &record : records)
+        try
         {
-            if (!save_analysis_result(record))
+            // 检查连接是否有效，如果无效则重新连接
+            if (connection_ == nullptr || mysql_ping(connection_) != 0)
             {
-                throw std::runtime_error("Failed to save a record");
+                std::cerr << "数据库连接无效，尝试重新连接..." << std::endl;
+                if (!connect())
+                {
+                    std::cerr << "重新连接数据库失败" << std::endl;
+                    retry_count++;
+                    std::this_thread::sleep_for(std::chrono::seconds(1));
+                    continue;
+                }
+            }
+
+            // 开始事务
+            if (!execute_query("START TRANSACTION"))
+            {
+                std::cerr << "开始事务失败" << std::endl;
+                retry_count++;
+                std::this_thread::sleep_for(std::chrono::seconds(1));
+                continue;
+            }
+
+            bool all_success = true;
+            for (const auto &record : records)
+            {
+                if (!save_analysis_result(record))
+                {
+                    all_success = false;
+                    break;
+                }
+            }
+
+            if (all_success)
+            {
+                // 提交事务
+                if (execute_query("COMMIT"))
+                {
+                    return true;
+                }
+                else
+                {
+                    std::cerr << "提交事务失败" << std::endl;
+                }
+            }
+            else
+            {
+                std::cerr << "保存记录失败" << std::endl;
+            }
+
+            // 回滚事务
+            execute_query("ROLLBACK");
+        }
+        catch (const std::exception &e)
+        {
+            std::cerr << "批量保存异常: " << e.what() << std::endl;
+            // 确保事务被回滚
+            try
+            {
+                execute_query("ROLLBACK");
+            }
+            catch (...)
+            {
+                // 忽略回滚错误
             }
         }
 
-        // 提交事务
-        return execute_query("COMMIT");
+        retry_count++;
+        if (retry_count < max_retries)
+        {
+            std::cerr << "批量保存失败，等待后重试 (" << retry_count << "/" << max_retries << ")" << std::endl;
+            std::this_thread::sleep_for(std::chrono::seconds(2));
+        }
     }
-    catch (const std::exception &e)
-    {
-        std::cerr << "Error in batch save: " << e.what() << std::endl;
-        // 回滚事务
-        execute_query("ROLLBACK");
-        return false;
-    }
+
+    std::cerr << "批量保存失败，已达到最大重试次数" << std::endl;
+    return false;
 }
 
 std::vector<MediaAnalysisRecord> DatabaseManager::query_results(const std::string &condition)

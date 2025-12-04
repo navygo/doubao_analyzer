@@ -6,6 +6,8 @@
 #include <fstream>
 #include <algorithm>
 #include <regex>
+#include <unordered_map>
+#include <mutex>
 #include <opencv2/opencv.hpp>
 #include <nlohmann/json.hpp>
 
@@ -74,4 +76,8 @@ namespace utils {
     // 文件下载工具
     bool download_file(const std::string& url, const std::string& output_path);
     std::string get_current_timestamp();
+
+    // 全局文件缓存变量
+    extern std::mutex cache_mutex;
+    extern std::unordered_map<std::string, std::string> url_cache;
 }

@@ -355,25 +355,63 @@ std::vector<std::string> VideoKeyframeAnalyzer::extract_keyframes(const std::str
 
         std::string cmd;
 
-        // 根据编码格式选择不同的提取策略
-        if (codec == "hevc")
+        // // 根据编码格式选择不同的提取策略
+        // if (codec == "hevc")
+        // {
+        //     // HEVC编码使用场景变化检测 + 固定间隔采样
+        //     cmd = "ffmpeg -threads 4 -thread_type frame+slice -hwaccel auto -i \"" + video_url + "\" -vf \"select=gt(scene\\\\,0.3)+eq(n\\\\,2)\" "
+        //                                                                                          "-vsync vfr -frames:v " +
+        //           std::to_string(max_frames) +
+        //           " -q:v 2 -y \"" + output_pattern + "\"";
+        // }
+        // else
+        // {
+        //     // H.264等其他编码使用关键帧检测 fmpeg命令需要添加scale参数，ffmpeg命令中添加 scale=384:384
+        //     // 质量参数-q:v从3改为 2
+        //     cmd = "ffmpeg -threads 4 -thread_type frame+slice -hwaccel auto -i \"" + video_url + "\" -vf \"select=eq(pict_type\\\\,I),scale=384:384\" "
+        //                                                                                          "-vsync vfr -frames:v " +
+        //           std::to_string(max_frames) +
+        //           " -q:v 2 -y \"" + output_pattern + "\"";
+        // }
+        // 2025-12-04 根据编码格式选择不同的提取策略
+        if (codec == "hevc" || codec == "h265")
         {
-            // HEVC编码使用场景变化检测 + 固定间隔采样
-            cmd = "ffmpeg -i \"" + video_url + "\" -vf \"select=gt(scene\\\\,0.3)+eq(n\\\\,2)\" "
-                                               "-vsync vfr -frames:v " +
-                  std::to_string(max_frames) +
-                  " -q:v 2 -y \"" + output_pattern + "\"";
+            // HEVC编码：混合策略（场景变化 + 关键帧 + 时间均匀）
+            cmd = "ffmpeg -threads 8 " // 增加线程数
+                  "-hwaccel cuda "     // 明确指定硬件加速（如果支持）
+                  "-i \"" +
+                  video_url + "\" "
+                              "-vf \""
+                              "select='gt(scene,0.2)+eq(pict_type,I)+not(mod(n,15))', "                 // 场景变化(0.2更敏感) + 关键帧 + 每15帧取1帧
+                              "scale='min(384,iw):min(384,ih)':force_original_aspect_ratio=decrease\" " // 智能缩放
+                              "-vsync vfr "
+                              "-frames:v " +
+                  std::to_string(max_frames) + " "
+                                               "-q:v 1 "            // 提高质量
+                                               "-loglevel warning " // 减少日志输出
+                                               "-y "
+                                               "\"" +
+                  output_pattern + "\"";
         }
         else
         {
-            // H.264等其他编码使用关键帧检测 fmpeg命令需要添加scale参数，ffmpeg命令中添加 scale=384:384
-            // 质量参数-q:v从3改为 2
-            cmd = "ffmpeg -i \"" + video_url + "\" -vf \"select=eq(pict_type\\\\,I),scale=384:384\" "
-                                               "-vsync vfr -frames:v " +
-                  std::to_string(max_frames) +
-                  " -q:v 2 -y \"" + output_pattern + "\"";
+            // H.264及其他编码：关键帧 + 时间采样 + 场景检测
+            cmd = "ffmpeg -threads 8 "
+                  "-hwaccel auto "
+                  "-i \"" +
+                  video_url + "\" "
+                              "-vf \""
+                              "select='eq(pict_type,I)+not(mod(n,10))+gt(scene,0.25)', "                              // 关键帧 + 每25帧 + 场景变化
+                              "scale='min(384,iw):min(384,ih)':force_original_aspect_ratio=decrease:flags=lanczos\" " // 高质量缩放
+                              "-vsync vfr "
+                              "-frames:v " +
+                  std::to_string(max_frames) + " "
+                                               "-q:v 1 "
+                                               "-loglevel warning "
+                                               "-y "
+                                               "\"" +
+                  output_pattern + "\"";
         }
-
         execute_command(cmd);
 
         // 收集所有提取的帧文件路径
