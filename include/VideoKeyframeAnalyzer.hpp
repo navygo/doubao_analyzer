@@ -126,6 +126,11 @@ class VideoKeyframeAnalyzer
 {
 private:
     std::string temp_dir_;
+    
+    // CUDA资源管理
+    static std::atomic<int> active_cuda_tasks_;
+    static std::mutex cuda_mutex_;
+    static const int MAX_CONCURRENT_CUDA_TASKS = 2; // 限制同时使用CUDA的任务数量
 
     // 线程池相关成员
     std::vector<std::thread> worker_threads_;
@@ -153,6 +158,10 @@ private:
 
     // 单个帧的处理函数
     std::string process_single_frame(const std::string& frame_path);
+    
+    // CUDA资源管理方法
+    bool acquire_cuda_resource();
+    void release_cuda_resource();
 
 public:
     VideoKeyframeAnalyzer();

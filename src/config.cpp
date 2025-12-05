@@ -39,9 +39,9 @@ namespace config
         ".MP4", ".AVI", ".MOV", ".MKV", ".FLV", ".WMV"};
 
     // 数据库配置
-    const std::string DB_HOST = "";
-    const std::string DB_USER = "";
-    const std::string DB_PASSWORD = "";
-    const std::string DB_NAME = "";
+    const std::string DB_HOST = "localhost";
+    const std::string DB_USER = "root";
+    const std::string DB_PASSWORD = "password";
+    const std::string DB_NAME = "doubao_analyzer";
     const unsigned int DB_PORT = 3306;
 }

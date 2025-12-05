@@ -71,6 +71,9 @@ private:
     // 创建新连接
     std::shared_ptr<CurlConnection> create_connection();
 
+    // 预热连接
+    void preheat_connection(std::shared_ptr<CurlConnection> connection);
+
     // 连接池
     std::queue<std::shared_ptr<CurlConnection>> connections_;
 

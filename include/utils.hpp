@@ -53,6 +53,7 @@ namespace utils {
     
     // Base64编码
     std::string base64_encode(const std::vector<unsigned char>& data);
+    std::string base64_encode_chunked(const std::vector<unsigned char>& data);
     std::string base64_encode_file(const std::string& file_path);
     std::vector<unsigned char> base64_decode(const std::string& encoded_string);
     

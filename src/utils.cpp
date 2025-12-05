@@ -198,6 +198,73 @@ namespace utils
         return encoded;
     }
 
+    // 分块Base64编码，减少内存占用
+    std::string base64_encode_chunked(const std::vector<unsigned char> &data)
+    {
+        static const std::string base64_chars =
+            "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+            "abcdefghijklmnopqrstuvwxyz"
+            "0123456789+/";
+
+        std::string encoded;
+        encoded.reserve((data.size() * 4 + 2) / 3); // 预分配内存，减少重新分配次数
+
+        const size_t chunk_size = 3 * 4096; // 12KB的块，确保是3的倍数
+        size_t pos = 0;
+
+        while (pos < data.size())
+        {
+            size_t end = std::min(pos + chunk_size, data.size());
+
+            // 处理当前块
+            for (size_t i = pos; i < end; i += 3)
+            {
+                unsigned char char_array_3[3];
+                unsigned char char_array_4[4];
+                int j = 0;
+
+                // 填充char_array_3
+                for (j = 0; j < 3 && (i + j) < end; ++j)
+                {
+                    char_array_3[j] = data[i + j];
+                }
+
+                // 填充剩余的0
+                for (; j < 3; ++j)
+                {
+                    char_array_3[j] = (char)0;
+                }
+
+                char_array_4[0] = (char_array_3[0] & 0xfc) >> 2;
+                char_array_4[1] = ((char_array_3[0] & 0x03) << 4) + ((char_array_3[1] & 0xf0) >> 4);
+                char_array_4[2] = ((char_array_3[1] & 0x0f) << 2) + ((char_array_3[2] & 0xc0) >> 6);
+                char_array_4[3] = char_array_3[2] & 0x3f;
+
+                // 计算实际有效的字符数
+                int valid_chars = 4;
+                if (i + 2 >= data.size())
+                    valid_chars = 3;
+                if (i + 1 >= data.size())
+                    valid_chars = 2;
+
+                for (j = 0; j < valid_chars; j++)
+                {
+                    encoded += base64_chars[char_array_4[j]];
+                }
+
+                // 添加填充的'='
+                while (valid_chars++ < 4)
+                {
+                    encoded += '=';
+                }
+            }
+
+            pos = end;
+        }
+
+        return encoded;
+    }
+
     std::string base64_encode_file(const std::string &file_path)
     {
         double start_time = get_current_time();
@@ -216,8 +283,8 @@ namespace utils
         std::cout << "⏰ [性能] 文件信息获取完成，耗时: " << (file_info_time - start_time) << " 秒" << std::endl;
         std::cout << "⏰ [性能] 原始文件大小: " << file_size << " 字节" << std::endl;
 
-        // 如果图片过大，先进行压缩
-        if (file_size > 512 * 1024) // 降低阈值到512KB
+        // 降低压缩阈值到256KB，减少处理时间
+        if (file_size > 256 * 1024)
         {
             std::cout << "⏰ [性能] 文件过大，开始压缩处理..." << std::endl;
             double compress_start = get_current_time();
@@ -231,7 +298,7 @@ namespace utils
                 std::cout << "⏰ [性能] 图片尺寸: " << img.cols << "x" << img.rows << std::endl;
 
                 // 进一步减小图片尺寸，提高处理速度
-                int max_size = 384; // 降低到384像素，提高处理速度
+                int max_size = 256; // 降低到256像素，大幅提高处理速度
 
                 // 直接调整到目标尺寸，减少中间步骤
                 if (img.cols > max_size || img.rows > max_size)
@@ -239,8 +306,8 @@ namespace utils
                     double resize_start = get_current_time();
                     double scale = max_size / (double)std::max(img.cols, img.rows);
                     cv::Mat resized;
-                    // 使用INTER_LINEAR插值，比INTER_AREA更快
-                    cv::resize(img, resized, cv::Size(), scale, scale, cv::INTER_LINEAR);
+                    // 使用INTER_NEAREST插值，比INTER_LINEAR更快
+                    cv::resize(img, resized, cv::Size(), scale, scale, cv::INTER_NEAREST);
                     img = resized;
                     double resize_end = get_current_time();
                     std::cout << "⏰ [性能] 图片缩放完成，耗时: " << (resize_end - resize_start) << " 秒" << std::endl;
@@ -249,18 +316,19 @@ namespace utils
                 // 降低图片质量，减小文件大小
                 double encode_start = get_current_time();
                 std::vector<uchar> jpeg_data;
-                std::vector<int> params = {cv::IMWRITE_JPEG_QUALITY, 65, cv::IMWRITE_JPEG_OPTIMIZE, 1};
+                // 进一步降低JPEG质量至55，平衡质量和速度
+                std::vector<int> params = {cv::IMWRITE_JPEG_QUALITY, 55, cv::IMWRITE_JPEG_OPTIMIZE, 1};
                 cv::imencode(".jpg", img, jpeg_data, params);
                 double encode_end = get_current_time();
                 std::cout << "⏰ [性能] 图片编码完成，耗时: " << (encode_end - encode_start) << " 秒" << std::endl;
                 std::cout << "⏰ [性能] 压缩后大小: " << jpeg_data.size() << " 字节" << std::endl;
 
                 // 如果压缩后仍然较大，进一步降低质量
-                if (jpeg_data.size() > 150 * 1024) // 降低阈值到150KB
+                if (jpeg_data.size() > 100 * 1024) // 降低阈值到100KB
                 {
                     std::cout << "⏰ [性能] 文件仍然过大，进行二次压缩..." << std::endl;
                     double reencode_start = get_current_time();
-                    params = {cv::IMWRITE_JPEG_QUALITY, 50, cv::IMWRITE_JPEG_OPTIMIZE, 1};
+                    params = {cv::IMWRITE_JPEG_QUALITY, 40, cv::IMWRITE_JPEG_OPTIMIZE, 1};
                     jpeg_data.clear();
                     cv::imencode(".jpg", img, jpeg_data, params);
                     double reencode_end = get_current_time();
@@ -269,7 +337,8 @@ namespace utils
                 }
 
                 double b64_start = get_current_time();
-                std::string result = base64_encode(jpeg_data);
+                // 使用分块编码方式处理Base64，减少内存占用
+                std::string result = base64_encode_chunked(jpeg_data);
                 double b64_end = get_current_time();
                 std::cout << "⏰ [性能] Base64编码完成，耗时: " << (b64_end - b64_start) << " 秒" << std::endl;
 
@@ -283,13 +352,29 @@ namespace utils
         // 小图片直接读取和编码
         std::cout << "⏰ [性能] 文件较小，直接处理..." << std::endl;
         double read_start = get_current_time();
-        std::vector<unsigned char> buffer(file_size);
-        file.read(reinterpret_cast<char*>(buffer.data()), file_size);
+
+        // 使用分块读取方式，减少内存峰值
+        const size_t chunk_size = 64 * 1024; // 64KB块
+        std::vector<unsigned char> buffer;
+        buffer.reserve(file_size);
+
+        std::vector<unsigned char> chunk(chunk_size);
+        while (file.read(reinterpret_cast<char *>(chunk.data()), chunk_size))
+        {
+            buffer.insert(buffer.end(), chunk.begin(), chunk.begin() + file.gcount());
+        }
+        // 处理最后一个不完整的块
+        if (file.gcount() > 0)
+        {
+            buffer.insert(buffer.end(), chunk.begin(), chunk.begin() + file.gcount());
+        }
+
         double read_end = get_current_time();
         std::cout << "⏰ [性能] 文件读取完成，耗时: " << (read_end - read_start) << " 秒" << std::endl;
 
         double b64_start = get_current_time();
-        std::string result = base64_encode(buffer);
+        // 使用分块编码方式处理Base64
+        std::string result = base64_encode_chunked(buffer);
         double b64_end = get_current_time();
         std::cout << "⏰ [性能] Base64编码完成，耗时: " << (b64_end - b64_start) << " 秒" << std::endl;
 
@@ -388,16 +473,16 @@ namespace utils
         return gpu::GPUManager::resize_image(image, max_size);
     }
 
-    std::string optimize_image_for_ollama(const std::string& base64_data, const std::string& image_url)
+    std::string optimize_image_for_ollama(const std::string &base64_data, const std::string &image_url)
     {
-        try 
+        try
         {
             // 解码base64数据
             std::vector<unsigned char> image_data = base64_decode(base64_data);
 
             // 从内存中加载图像
             cv::Mat image = cv::imdecode(image_data, cv::IMREAD_COLOR);
-            if (image.empty()) 
+            if (image.empty())
             {
                 std::cout << "⚠️ 无法解码图片数据，返回原始数据" << std::endl;
                 return base64_data;
@@ -407,7 +492,7 @@ namespace utils
             std::string output_format = ".jpg"; // 默认使用JPEG格式
 
             // 如果原始格式是PNG，可以考虑保留PNG格式（对于透明度重要的图像）
-            if (image_url.find("data:image/png") == 0) 
+            if (image_url.find("data:image/png") == 0)
             {
                 output_format = ".png";
             }
@@ -416,12 +501,11 @@ namespace utils
             int max_dimension = 512; // 从1024降低到512，显著减少数据量
 
             // 如果图像太大，进行缩放
-            if (image.cols > max_dimension || image.rows > max_dimension) 
+            if (image.cols > max_dimension || image.rows > max_dimension)
             {
                 double scale = std::min(
                     max_dimension / static_cast<double>(image.cols),
-                    max_dimension / static_cast<double>(image.rows)
-                );
+                    max_dimension / static_cast<double>(image.rows));
 
                 cv::Mat resized_image;
                 cv::resize(image, resized_image, cv::Size(), scale, scale, cv::INTER_LINEAR);
@@ -432,13 +516,13 @@ namespace utils
             std::vector<unsigned char> optimized_data;
             std::vector<int> params;
 
-            if (output_format == ".png") 
+            if (output_format == ".png")
             {
                 // PNG压缩参数
                 params = {cv::IMWRITE_PNG_COMPRESSION, 6};
                 cv::imencode(output_format, image, optimized_data, params);
-            } 
-            else 
+            }
+            else
             {
                 // JPEG压缩参数 - 降低质量以减小文件大小
                 params = {cv::IMWRITE_JPEG_QUALITY, 60, cv::IMWRITE_JPEG_OPTIMIZE, 1};
@@ -455,8 +539,8 @@ namespace utils
 
             // 重新编码为base64
             return base64_encode(optimized_data);
-        } 
-        catch (const std::exception& e) 
+        }
+        catch (const std::exception &e)
         {
             std::cout << "⚠️ 图片优化失败: " << e.what() << "，返回原始数据" << std::endl;
             return base64_data;
@@ -594,7 +678,7 @@ namespace utils
                         return true;
                     }
                 }
-                catch (const std::exception& e)
+                catch (const std::exception &e)
                 {
                     std::cerr << "❌ 从缓存复制文件失败: " << e.what() << std::endl;
                 }
@@ -604,9 +688,10 @@ namespace utils
         // 创建唯一的临时文件名，避免并发冲突
         // 使用URL哈希+线程ID+时间戳确保唯一性
         std::string unique_id = std::to_string(std::hash<std::string>{}(url)) + "_" +
-                               std::to_string(std::hash<std::thread::id>{}(std::this_thread::get_id())) + "_" +
-                               std::to_string(std::chrono::duration_cast<std::chrono::milliseconds>(
-                                   std::chrono::high_resolution_clock::now().time_since_epoch()).count());
+                                std::to_string(std::hash<std::thread::id>{}(std::this_thread::get_id())) + "_" +
+                                std::to_string(std::chrono::duration_cast<std::chrono::milliseconds>(
+                                                   std::chrono::high_resolution_clock::now().time_since_epoch())
+                                                   .count());
 
         std::string temp_path = "/tmp/download_cache_" + unique_id + ".jpg";
 
@@ -679,7 +764,7 @@ namespace utils
 
             return true;
         }
-        catch (const std::exception& e)
+        catch (const std::exception &e)
         {
             std::cerr << "❌ 文件操作失败: " << e.what() << std::endl;
             std::filesystem::remove(temp_path); // 清理临时文件

@@ -8,6 +8,10 @@
 #include <cstdlib>
 #include <algorithm>
 
+// 初始化静态成员变量
+std::atomic<int> VideoKeyframeAnalyzer::active_cuda_tasks_{0};
+std::mutex VideoKeyframeAnalyzer::cuda_mutex_;
+
 VideoKeyframeAnalyzer::VideoKeyframeAnalyzer()
 {
     if (!create_temp_directory())
@@ -16,8 +20,12 @@ VideoKeyframeAnalyzer::VideoKeyframeAnalyzer()
     }
     std::cout << "临时目录: " << temp_dir_ << std::endl;
 
-    // 初始化线程池
-    initialize_thread_pool();
+    // 初始化线程池，限制并发数量以减少CUDA内存压力
+    // 根据硬件并发数和CUDA资源限制调整线程池大小
+    int hardware_threads = static_cast<int>(std::thread::hardware_concurrency());
+    int optimal_threads = std::min(4, std::max(2, hardware_threads / 2)); // 限制在2-4个线程之间
+    std::cout << "硬件并发线程数: " << hardware_threads << ", 使用优化线程数: " << optimal_threads << std::endl;
+    initialize_thread_pool(optimal_threads);
 }
 
 VideoKeyframeAnalyzer::~VideoKeyframeAnalyzer()
@@ -114,6 +122,10 @@ std::string VideoKeyframeAnalyzer::execute_command(const std::string &cmd)
     std::string result;
 
     std::cout << "执行命令: " << cmd << std::endl;
+    std::cout << "命令长度: " << cmd.length() << std::endl;
+    if (!cmd.empty() && cmd[0] == '|') {
+        std::cerr << "错误：命令开头包含非法字符 '|'" << std::endl;
+    }
 
     FILE *pipe = popen(cmd.c_str(), "r");
     if (!pipe)
@@ -378,7 +390,8 @@ std::string get_optimized_extract_cmd(
               "force_original_aspect_ratio=decrease,"
               "pad=384:384:(ow-iw)/2:(oh-ih)/2:color=black";
 
-    // 硬件加速和输出选项
+    // 硬件加速和输出选项 - 添加回退机制
+    // 尝试使用CUDA加速，如果失败则自动回退到CPU
     cmd << "-hwaccel cuda "
         << "-extra_hw_frames 2 "
         << "-i \"" << video_url << "\" "
@@ -390,7 +403,22 @@ std::string get_optimized_extract_cmd(
         << "-stats "          // 显示进度统计
         << "-y \"" << output_pattern << "\"";
 
-    return cmd.str();
+    // 创建回退命令，当CUDA不可用时使用
+    std::string fallback_cmd = "ffmpeg -threads " + std::to_string(available_threads) + " " +
+        "-i \"" + video_url + "\" " +
+        "-vf \"" + filter + "\" " +
+        "-vsync vfr " +
+        "-frames:v " + std::to_string(max_frames) + " " +
+        "-q:v 1 " +
+        "-loglevel error " +
+        "-stats " +
+        "-y \"" + output_pattern + "\"";
+
+    // 返回一个包含两种命令的字符串，用特殊分隔符分隔
+    // 主程序将首先尝试CUDA命令，如果失败则使用回退命令
+    std::string full_cmd = cmd.str() + "|||FALLBACK|||" + fallback_cmd;
+    std::cout << "完整命令长度: " << full_cmd.length() << std::endl;
+    return full_cmd;
 }
 
 std::vector<std::string> VideoKeyframeAnalyzer::extract_keyframes(
@@ -422,14 +450,89 @@ std::vector<std::string> VideoKeyframeAnalyzer::extract_keyframes(
 
         // 获取视频元数据
         VideoMetadata metadata = get_video_metadata(video_url);
-
+        //2025-12-05 算法判断，如果传递抽取帧数大于视频总帧数，则复制总帧数，如果小于总帧数，则最少抽取3帧
+        if (max_frames < 3)
+        {
+            max_frames =3;
+        }
+        if (max_frames>metadata.total_frames)
+        {
+            max_frames = metadata.total_frames;
+        }
+        
         // 根据视频时长和编码格式构建优化命令
         std::string cmd = get_optimized_extract_cmd(
             video_url, codec, max_frames, output_pattern, metadata.duration);
 
         // 执行命令并计时
         auto start_time = std::chrono::high_resolution_clock::now();
-        execute_command(cmd);
+        
+        // 尝试获取CUDA资源
+        bool use_cuda = acquire_cuda_resource();
+        
+        // 尝试执行命令，如果CUDA命令失败则使用回退命令
+        bool cmd_success = false;
+        try {
+            // 如果获取到CUDA资源，使用CUDA命令
+            if (use_cuda) {
+                size_t fallback_pos = cmd.find("|||FALLBACK|||");
+                std::string cuda_cmd = (fallback_pos != std::string::npos) ? 
+                                     cmd.substr(0, fallback_pos) : cmd;
+                execute_command(cuda_cmd);
+                cmd_success = true;
+            } else {
+                // 如果没有获取到CUDA资源，直接使用CPU回退命令
+                size_t fallback_pos = cmd.find("|||FALLBACK|||");
+                if (fallback_pos != std::string::npos) {
+                    std::string fallback_cmd = cmd.substr(fallback_pos + 13); // 13是"|||FALLBACK|||"的长度
+                    std::cout << "CUDA资源不可用，使用CPU处理..." << std::endl;
+                    std::cout << "回退命令长度: " << fallback_cmd.length() << std::endl;
+                    if (!fallback_cmd.empty() && fallback_cmd[0] == '|') {
+                        std::cerr << "错误：回退命令开头包含非法字符 '|'，正在移除..." << std::endl;
+                        fallback_cmd = fallback_cmd.substr(1);
+                    }
+                    execute_command(fallback_cmd);
+                    cmd_success = true;
+                } else {
+                    // 如果没有回退命令，尝试执行原命令
+                    execute_command(cmd);
+                    cmd_success = true;
+                }
+            }
+        } catch (const std::exception& e) {
+            std::cerr << "视频处理命令执行失败: " << e.what() << std::endl;
+            
+            // 如果使用CUDA失败，尝试使用CPU回退命令
+            if (use_cuda) {
+                size_t fallback_pos = cmd.find("|||FALLBACK|||");
+                if (fallback_pos != std::string::npos) {
+                    std::string fallback_cmd = cmd.substr(fallback_pos + 13);
+                    std::cout << "CUDA处理失败，尝试使用CPU回退命令..." << std::endl;
+                    std::cout << "回退命令长度: " << fallback_cmd.length() << std::endl;
+                    if (!fallback_cmd.empty() && fallback_cmd[0] == '|') {
+                        std::cerr << "错误：回退命令开头包含非法字符 '|'，正在移除..." << std::endl;
+                        fallback_cmd = fallback_cmd.substr(1);
+                    }
+                    try {
+                        execute_command(fallback_cmd);
+                        cmd_success = true;
+                        std::cout << "CPU回退命令执行成功" << std::endl;
+                    } catch (const std::exception& fallback_e) {
+                        std::cerr << "CPU回退命令也失败: " << fallback_e.what() << std::endl;
+                    }
+                }
+            }
+        }
+        
+        // 释放CUDA资源
+        if (use_cuda) {
+            release_cuda_resource();
+        }
+        
+        if (!cmd_success) {
+            throw std::runtime_error("所有视频处理命令均执行失败");
+        }
+        
         auto end_time = std::chrono::high_resolution_clock::now();
         auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time).count();
 
@@ -466,34 +569,95 @@ std::vector<std::string> VideoKeyframeAnalyzer::extract_keyframes(
                 // 计算需要补充的帧数
                 int remaining_frames = 3 - frames_base64.size();
 
-                // 计算采样间隔
-                double interval = metadata.duration / (remaining_frames + 1);
+                // 优化采样策略：使用固定时间点而不是等分
+                std::vector<double> timestamps;
+                if (remaining_frames == 1)
+                {
+                    // 只需补充1帧，取视频25%位置
+                    timestamps.push_back(metadata.duration * 0.25);
+                }
+                else if (remaining_frames == 2)
+                {
+                    // 需要补充2帧，取25%和75%位置
+                    timestamps.push_back(metadata.duration * 0.25);
+                    timestamps.push_back(metadata.duration * 0.75);
+                }
 
                 // 为每个采样点创建临时文件路径
                 std::vector<std::string> sample_paths;
-                for (int i = 1; i <= remaining_frames; ++i)
+                for (int i = 0; i < remaining_frames; ++i)
                 {
                     std::string sample_path = temp_dir_ + "/sample_" +
                                               (i < 10 ? "00" : (i < 100 ? "0" : "")) +
-                                              std::to_string(i) + ".jpg";
+                                              std::to_string(i + 1) + ".jpg";
                     sample_paths.push_back(sample_path);
                 }
 
-                // 构建FFmpeg命令
-                std::string sample_cmd = "ffmpeg -hwaccel cuda -i \"" + video_url + "\"";
+                // 构建FFmpeg命令 - 添加回退机制
+                std::string sample_cmd_cuda = "ffmpeg -hwaccel cuda -i \"" + video_url + "\"";
+                std::string sample_cmd_cpu = "ffmpeg -i \"" + video_url + "\"";
 
                 // 添加采样时间点
                 for (int i = 0; i < remaining_frames; ++i)
                 {
-                    double timestamp = (i + 1) * interval;
-                    sample_cmd += " -ss " + std::to_string(timestamp) +
+                    double timestamp = timestamps[i];
+                    sample_cmd_cuda += " -ss " + std::to_string(timestamp) +
+                                  " -vframes 1 \"" + sample_paths[i] + "\"";
+                    sample_cmd_cpu += " -ss " + std::to_string(timestamp) +
                                   " -vframes 1 \"" + sample_paths[i] + "\"";
                 }
 
-                sample_cmd += " -y";
+                sample_cmd_cuda += " -y";
+                sample_cmd_cpu += " -y";
 
-                // 执行命令
-                execute_command(sample_cmd);
+                // 尝试获取CUDA资源
+                bool use_cuda = acquire_cuda_resource();
+                
+                // 根据CUDA资源可用性选择命令
+                bool cmd_success = false;
+                try {
+                    if (use_cuda) {
+                        execute_command(sample_cmd_cuda);
+                        cmd_success = true;
+                    } else {
+                        std::cout << "CUDA资源不可用，使用CPU处理..." << std::endl;
+                        std::cout << "CPU命令长度: " << sample_cmd_cpu.length() << std::endl;
+                        if (!sample_cmd_cpu.empty() && sample_cmd_cpu[0] == '|') {
+                            std::cerr << "错误：CPU命令开头包含非法字符 '|'，正在移除..." << std::endl;
+                            sample_cmd_cpu = sample_cmd_cpu.substr(1);
+                        }
+                        execute_command(sample_cmd_cpu);
+                        cmd_success = true;
+                    }
+                } catch (const std::exception& e) {
+                    std::cerr << "采样命令执行失败: " << e.what() << std::endl;
+                    
+                    // 如果使用CUDA失败，尝试使用CPU命令
+                    if (use_cuda) {
+                        try {
+                            std::cout << "CUDA处理失败，尝试使用CPU回退命令..." << std::endl;
+                            std::cout << "CPU回退命令长度: " << sample_cmd_cpu.length() << std::endl;
+                            if (!sample_cmd_cpu.empty() && sample_cmd_cpu[0] == '|') {
+                                std::cerr << "错误：CPU回退命令开头包含非法字符 '|'，正在移除..." << std::endl;
+                                sample_cmd_cpu = sample_cmd_cpu.substr(1);
+                            }
+                            execute_command(sample_cmd_cpu);
+                            cmd_success = true;
+                            std::cout << "CPU回退命令执行成功" << std::endl;
+                        } catch (const std::exception& fallback_e) {
+                            std::cerr << "CPU回退命令也失败: " << fallback_e.what() << std::endl;
+                        }
+                    }
+                }
+                
+                // 释放CUDA资源
+                if (use_cuda) {
+                    release_cuda_resource();
+                }
+                
+                if (!cmd_success) {
+                    throw std::runtime_error("所有采样命令均执行失败");
+                }
 
                 // 使用并发处理这些采样帧
                 std::vector<std::string> sample_frames = process_frames_concurrently(sample_paths);
@@ -529,6 +693,34 @@ std::vector<std::string> VideoKeyframeAnalyzer::extract_keyframes(
 
     return frames_base64;
 }
+
+// CUDA资源管理方法实现
+bool VideoKeyframeAnalyzer::acquire_cuda_resource() {
+    std::lock_guard<std::mutex> lock(cuda_mutex_);
+    
+    // 如果已经达到最大并发CUDA任务数，返回false
+    if (active_cuda_tasks_.load() >= MAX_CONCURRENT_CUDA_TASKS) {
+        std::cout << "CUDA资源已满，当前活动任务数: " << active_cuda_tasks_.load() 
+                  << "，最大允许: " << MAX_CONCURRENT_CUDA_TASKS << std::endl;
+        return false;
+    }
+    
+    // 增加活动CUDA任务计数
+    active_cuda_tasks_++;
+    std::cout << "获取CUDA资源成功，当前活动任务数: " << active_cuda_tasks_.load() << std::endl;
+    return true;
+}
+
+void VideoKeyframeAnalyzer::release_cuda_resource() {
+    std::lock_guard<std::mutex> lock(cuda_mutex_);
+    
+    // 确保计数不会变为负数
+    if (active_cuda_tasks_.load() > 0) {
+        active_cuda_tasks_--;
+        std::cout << "释放CUDA资源，当前活动任务数: " << active_cuda_tasks_.load() << std::endl;
+    }
+}
+
 // old version bak
 // std::vector<std::string> VideoKeyframeAnalyzer::extract_keyframes(const std::string &video_url,
 //                                                                   int max_frames,
@@ -762,6 +954,17 @@ std::vector<std::string> VideoKeyframeAnalyzer::extract_sample_frames(const std:
         //
         // 获取视频时长
         VideoMetadata metadata = get_video_metadata(video_url);
+
+        //2025-12-05 算法判断，如果传递抽取帧数大于视频总帧数，则复制总帧数，如果小于总帧数，则最少抽取3帧
+        if (num_samples < 3)
+        {
+            num_samples =3;
+        }
+        if (num_samples>metadata.total_frames)
+        {
+            num_samples = metadata.total_frames;
+        }
+        
 
         if (metadata.duration <= 0)
         {

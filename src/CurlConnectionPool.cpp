@@ -17,8 +17,9 @@ CurlConnection::CurlConnection() : curl_(nullptr) {
         // 添加更多性能优化选项
         curl_easy_setopt(curl_, CURLOPT_NOSIGNAL, 1L);        // 避免信号中断
         curl_easy_setopt(curl_, CURLOPT_TCP_NODELAY, 1L);     // 禁用Nagle算法，减少延迟
-        curl_easy_setopt(curl_, CURLOPT_BUFFERSIZE, 102400L); // 增大缓冲区大小到100KB
-        curl_easy_setopt(curl_, CURLOPT_ACCEPT_ENCODING, "gzip, deflate"); // 启用压缩
+        curl_easy_setopt(curl_, CURLOPT_BUFFERSIZE, 204800L); // 增大缓冲区大小到200KB
+        curl_easy_setopt(curl_, CURLOPT_ACCEPT_ENCODING, "gzip, deflate, br"); // 启用压缩，包括Brotli
+        curl_easy_setopt(curl_, CURLOPT_HTTP_VERSION, CURL_HTTP_VERSION_2_PRIOR_KNOWLEDGE); // 默认启用HTTP/2
 
         // 设置默认超时
         curl_easy_setopt(curl_, CURLOPT_TIMEOUT, 30L);
@@ -69,13 +70,18 @@ void CurlConnectionPool::initialize(size_t pool_size) {
     }
 
     shutdown_ = false;
-    pool_size_ = pool_size;
+    // 增加连接池大小，提高并发处理能力
+    pool_size_ = std::max(pool_size, static_cast<size_t>(50));
     active_connections_ = 0;
+
+    std::cout << "🔧 [连接池] 初始化连接池，目标连接数: " << pool_size_ << std::endl;
 
     // 创建初始连接
     for (size_t i = 0; i < pool_size_; ++i) {
         auto connection = create_connection();
         if (connection && connection->is_valid()) {
+            // 预热连接，发送一个简单的HEAD请求
+            preheat_connection(connection);
             connections_.push(connection);
         }
     }
@@ -164,4 +170,28 @@ std::shared_ptr<CurlConnection> CurlConnectionPool::create_connection() {
     }
 
     return connection;
+}
+
+// 预热连接，发送一个简单的HEAD请求
+void CurlConnectionPool::preheat_connection(std::shared_ptr<CurlConnection> connection) {
+    if (!connection || !connection->is_valid()) {
+        return;
+    }
+
+    CURL* curl = connection->get();
+    if (!curl) {
+        return;
+    }
+
+    // 设置一个简单的HEAD请求到常见的服务器
+    curl_easy_setopt(curl, CURLOPT_URL, "http://httpbin.org/head");
+    curl_easy_setopt(curl, CURLOPT_NOBODY, 1L); // HEAD请求
+    curl_easy_setopt(curl, CURLOPT_TIMEOUT, 5L); // 短超时
+    curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L); // 允许重定向
+
+    // 执行请求但不处理响应
+    curl_easy_perform(curl);
+
+    // 重置连接状态，以便后续使用
+    connection->reset();
 }

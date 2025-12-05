@@ -1649,17 +1649,34 @@ ApiResponse ApiServer::handle_batch_analysis(const std::vector<ApiRequest> &requ
 
     return response;
 }
-// 批量保存分析结果到数据库
+// 批量保存分析结果到数据库（异步处理）
 bool ApiServer::save_batch_to_database(const std::vector<AnalysisResult> &results)
 {
     try
     {
-        // 保存到数据库
-        return analyzer_->save_batch_results_to_database(results);
+        // 创建异步任务来保存到数据库，避免阻塞主循环
+        std::thread db_thread([this, results]() {
+            try {
+                bool success = analyzer_->save_batch_results_to_database(results);
+                if (!success) {
+                    std::cerr << "❌ 异步保存到数据库失败" << std::endl;
+                } else {
+                    std::cout << "✅ 异步保存到数据库成功，共 " << results.size() << " 条记录" << std::endl;
+                }
+            } catch (const std::exception &e) {
+                std::cerr << "❌ 异步保存到数据库异常: " << e.what() << std::endl;
+            }
+        });
+
+        // 分离线程，使其在后台运行
+        db_thread.detach();
+
+        // 立即返回true，表示异步任务已启动
+        return true;
     }
     catch (const std::exception &e)
     {
-        std::cerr << "❌ 保存到数据库失败: " << e.what() << std::endl;
+        std::cerr << "❌ 启动异步数据库保存任务失败: " << e.what() << std::endl;
         return false;
     }
 }
