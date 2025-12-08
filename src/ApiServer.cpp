@@ -1512,8 +1512,8 @@ ApiResponse ApiServer::handle_batch_analysis(const std::vector<ApiRequest> &requ
 
     try
     {
-        // 分批次处理请求，每批10个
-        const size_t batch_size = 10;
+        // 分批次处理请求，每批5个（减小批次大小以降低内存压力）
+        const size_t batch_size = 5;
         size_t total_batches = (requests.size() + batch_size - 1) / batch_size;
 
         std::cout << "🔄 [批次处理] 准备分 " << total_batches << " 批次处理 " << requests.size() << " 个请求，每批次最多 " << batch_size << " 个" << std::endl;
@@ -1711,8 +1711,8 @@ ApiResponse ApiServer::handle_db_media_analysis(const std::string &prompt, int m
         std::string analysis_prompt = prompt.empty() ? get_image_prompt() : prompt;
         int tokens = max_tokens > 0 ? max_tokens : config::DEFAULT_MAX_TOKENS;
 
-        // 分批次处理数据，使用传入的batch_size参数，默认为10
-        const size_t actual_batch_size = batch_size > 0 ? batch_size : 10;
+        // 分批次处理数据，使用传入的batch_size参数，默认为5（减小批次大小以降低内存压力）
+        const size_t actual_batch_size = batch_size > 0 ? std::min((size_t)batch_size, (size_t)5) : 5;
         size_t total_batches = (media_data.size() + actual_batch_size - 1) / actual_batch_size;
 
         std::cout << "🔄 [批次处理] 准备分 " << total_batches << " 批次处理数据，每批次最多 " << actual_batch_size << " 条" << std::endl;

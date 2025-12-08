@@ -69,16 +69,16 @@ bool DoubaoMediaAnalyzer::save_batch_results_to_database(const std::vector<Analy
 
     std::vector<MediaAnalysisRecord> records;
 
+    // 先过滤出成功的结果
     for (size_t i = 0; i < results.size(); ++i)
     {
         if (!results[i].success)
         {
-            continue; // 跳过失败的分析结果
+            std::cerr << "跳过失败的分析结果: " << (results[i].raw_response.contains("path") ? results[i].raw_response["path"] : "未知文件") << std::endl;
+            continue;
         }
 
-        //
         const std::string &file_path = results[i].raw_response.contains("path") ? results[i].raw_response["path"] : "unknown";
-        //
 
         MediaAnalysisRecord record;
         record.file_path = file_path;
@@ -105,7 +105,25 @@ bool DoubaoMediaAnalyzer::save_batch_results_to_database(const std::vector<Analy
         records.push_back(record);
     }
 
-    return db_manager_->save_batch_results(records);
+    if (records.empty())
+    {
+        std::cout << "没有成功的结果需要保存到数据库" << std::endl;
+        return true;
+    }
+
+    // 尝试保存到数据库
+    try {
+        bool result = db_manager_->save_batch_results(records);
+        if (result) {
+            std::cout << "✅ 成功保存 " << records.size() << " 条记录到数据库" << std::endl;
+        } else {
+            std::cerr << "❌ 保存记录到数据库失败" << std::endl;
+        }
+        return result;
+    } catch (const std::exception& e) {
+        std::cerr << "❌ 保存记录到数据库时发生异常: " << e.what() << std::endl;
+        return false;
+    }
 }
 
 // 查询数据库结果

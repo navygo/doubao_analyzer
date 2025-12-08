@@ -239,6 +239,9 @@ bool DatabaseManager::save_batch_results(const std::vector<MediaAnalysisRecord> 
     const int max_retries = 3;
     int retry_count = 0;
 
+    // 分批处理大小，减小每批次的记录数量以降低内存压力
+    const int batch_size = 5;
+
     while (retry_count < max_retries)
     {
         try
@@ -247,6 +250,9 @@ bool DatabaseManager::save_batch_results(const std::vector<MediaAnalysisRecord> 
             if (connection_ == nullptr || mysql_ping(connection_) != 0)
             {
                 std::cerr << "数据库连接无效，尝试重新连接..." << std::endl;
+                // 先关闭现有连接
+                close();
+                // 创建新连接
                 if (!connect())
                 {
                     std::cerr << "重新连接数据库失败" << std::endl;
@@ -266,26 +272,51 @@ bool DatabaseManager::save_batch_results(const std::vector<MediaAnalysisRecord> 
             }
 
             bool all_success = true;
-            for (const auto &record : records)
+
+            // 分批处理记录
+            for (size_t i = 0; i < records.size(); i += batch_size)
             {
-                if (!save_analysis_result(record))
+                size_t end = std::min(i + batch_size, records.size());
+
+                for (size_t j = i; j < end; ++j)
                 {
+                    if (!save_analysis_result(records[j]))
+                    {
+                        all_success = false;
+                        std::cerr << "保存记录失败: " << records[j].file_name << std::endl;
+                        break;
+                    }
+                }
+
+                // 如果当前批次失败，跳出循环
+                if (!all_success)
+                {
+                    break;
+                }
+
+                // 每处理一个小批次后提交一次，减少内存占用
+                if (!execute_query("COMMIT"))
+                {
+                    std::cerr << "提交批次失败" << std::endl;
                     all_success = false;
                     break;
+                }
+
+                // 如果还有更多记录要处理，开始新事务
+                if (end < records.size())
+                {
+                    if (!execute_query("START TRANSACTION"))
+                    {
+                        std::cerr << "开始新事务失败" << std::endl;
+                        all_success = false;
+                        break;
+                    }
                 }
             }
 
             if (all_success)
             {
-                // 提交事务
-                if (execute_query("COMMIT"))
-                {
-                    return true;
-                }
-                else
-                {
-                    std::cerr << "提交事务失败" << std::endl;
-                }
+                return true;
             }
             else
             {
@@ -307,6 +338,9 @@ bool DatabaseManager::save_batch_results(const std::vector<MediaAnalysisRecord> 
             {
                 // 忽略回滚错误
             }
+
+            // 重置连接，防止连接状态异常
+            close();
         }
 
         retry_count++;
