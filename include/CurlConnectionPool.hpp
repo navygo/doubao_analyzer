@@ -43,7 +43,7 @@ public:
     static CurlConnectionPool &getInstance();
 
     // 初始化连接池
-    void initialize(size_t pool_size = 30);
+    void initialize(size_t pool_size = 20);
 
     // 获取一个连接
     std::shared_ptr<CurlConnection> acquire();

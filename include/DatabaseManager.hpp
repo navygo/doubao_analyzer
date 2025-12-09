@@ -6,6 +6,7 @@
 #include <nlohmann/json.hpp>
 #include <mysql/mysql.h>
 #include "ConfigManager.hpp"
+#include "DatabaseConnectionPool.hpp"
 
 // 媒体分析结果记录
 struct MediaAnalysisRecord
@@ -26,7 +27,7 @@ struct MediaAnalysisRecord
 class DatabaseManager
 {
 private:
-    MYSQL *connection_;
+    std::shared_ptr<DatabaseConnectionPool> connection_pool_;
     std::string host_;
     std::string user_;
     std::string password_;
@@ -36,11 +37,13 @@ private:
     int connection_timeout_;
     int read_timeout_;
     int write_timeout_;
+    size_t pool_initial_size_;
+    size_t pool_max_size_;
+    size_t pool_max_idle_time_;
+    size_t pool_wait_timeout_;
+    bool pool_auto_reconnect_;
 
-    // 连接到数据库
-    bool connect();
-
-    // 执行SQL语句
+    // 执行SQL语句（使用连接池）
     bool execute_query(const std::string &query);
 
     // 初始化数据库表
@@ -54,7 +57,10 @@ public:
     DatabaseManager(const std::string &host, const std::string &user,
                     const std::string &password, const std::string &database,
                     unsigned int port = 3306, const std::string &charset = "utf8mb4",
-                    int cocalnnection_timeout = 60, int read_timeout = 60, int write_timeout = 60);
+                    int connection_timeout = 60, int read_timeout = 60, int write_timeout = 60,
+                    size_t pool_initial_size = 5, size_t pool_max_size = 20,
+                    size_t pool_max_idle_time = 300, size_t pool_wait_timeout = 5000,
+                    bool pool_auto_reconnect = true);
 
     // 从配置构造
     DatabaseManager(const DatabaseConfig &config);
@@ -62,10 +68,10 @@ public:
     // 析构函数
     virtual ~DatabaseManager();
 
-    // 初始化数据库连接
+    // 初始化数据库连接池
     bool initialize();
 
-    // 关闭数据库连接
+    // 关闭数据库连接池
     void close();
 
     // 保存分析结果

@@ -44,7 +44,7 @@ DoubaoMediaAnalyzer::DoubaoMediaAnalyzer(const std::string &api_key)
     curl_global_init(CURL_GLOBAL_DEFAULT);
 
     // 初始化连接池
-    CurlConnectionPool::getInstance().initialize(30);
+    CurlConnectionPool::getInstance().initialize(20);
 
     // 从配置文件加载数据库配置
     ConfigManager config_manager;
@@ -87,7 +87,7 @@ DoubaoMediaAnalyzer::DoubaoMediaAnalyzer(const std::string &api_key, const std::
     curl_global_init(CURL_GLOBAL_DEFAULT);
 
     // 初始化连接池
-    CurlConnectionPool::getInstance().initialize(30);
+    CurlConnectionPool::getInstance().initialize(20);
 
     // 从配置文件加载数据库配置
     ConfigManager config_manager;
@@ -125,7 +125,7 @@ DoubaoMediaAnalyzer::DoubaoMediaAnalyzer(const config::ApiConfig &api_config)
     curl_global_init(CURL_GLOBAL_DEFAULT);
 
     // 初始化连接池
-    CurlConnectionPool::getInstance().initialize(30);
+    CurlConnectionPool::getInstance().initialize(20);
 
     // 从配置文件加载数据库配置
     ConfigManager config_manager;

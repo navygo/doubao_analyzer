@@ -50,6 +50,7 @@ set(SOURCES
     src/config.cpp
     src/DatabaseManager.cpp
     src/DatabaseManager_extended.cpp
+    src/DatabaseConnectionPool.cpp
     src/ConfigManager.cpp
     src/VideoKeyframeAnalyzer.cpp
     src/CurlConnectionPool.cpp
@@ -70,6 +71,7 @@ set(API_SOURCES
     src/config.cpp
     src/DatabaseManager.cpp
     src/DatabaseManager_extended.cpp
+    src/DatabaseConnectionPool.cpp
     src/ConfigManager.cpp
     src/VideoKeyframeAnalyzer.cpp
     src/CurlConnectionPool.cpp

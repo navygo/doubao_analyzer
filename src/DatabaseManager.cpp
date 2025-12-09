@@ -11,18 +11,26 @@
 DatabaseManager::DatabaseManager(const std::string &host, const std::string &user,
                                  const std::string &password, const std::string &database,
                                  unsigned int port, const std::string &charset,
-                                 int connection_timeout, int read_timeout, int write_timeout)
-    : connection_(nullptr), host_(host), user_(user), password_(password),
+                                 int connection_timeout, int read_timeout, int write_timeout,
+                                 size_t pool_initial_size, size_t pool_max_size,
+                                 size_t pool_max_idle_time, size_t pool_wait_timeout,
+                                 bool pool_auto_reconnect)
+    : connection_pool_(nullptr), host_(host), user_(user), password_(password),
       database_(database), port_(port), charset_(charset),
-      connection_timeout_(connection_timeout), read_timeout_(read_timeout), write_timeout_(write_timeout)
+      connection_timeout_(connection_timeout), read_timeout_(read_timeout), write_timeout_(write_timeout),
+      pool_initial_size_(pool_initial_size), pool_max_size_(pool_max_size),
+      pool_max_idle_time_(pool_max_idle_time), pool_wait_timeout_(pool_wait_timeout),
+      pool_auto_reconnect_(pool_auto_reconnect)
 {
 }
 
 DatabaseManager::DatabaseManager(const DatabaseConfig &config)
-    : connection_(nullptr), host_(config.host), user_(config.user), password_(config.password),
+    : connection_pool_(nullptr), host_(config.host), user_(config.user), password_(config.password),
       database_(config.database), port_(config.port), charset_(config.charset),
       connection_timeout_(config.connection_timeout), read_timeout_(config.read_timeout),
-      write_timeout_(config.write_timeout)
+      write_timeout_(config.write_timeout),
+      pool_initial_size_(5), pool_max_size_(20), pool_max_idle_time_(300),
+      pool_wait_timeout_(5000), pool_auto_reconnect_(true)
 {
 }
 
@@ -33,9 +41,30 @@ DatabaseManager::~DatabaseManager()
 
 bool DatabaseManager::initialize()
 {
-    if (!connect())
+    // 创建数据库配置
+    DatabaseConfig db_config;
+    db_config.host = host_;
+    db_config.user = user_;
+    db_config.password = password_;
+    db_config.database = database_;
+    db_config.port = port_;
+    db_config.charset = charset_;
+    db_config.connection_timeout = connection_timeout_;
+    db_config.read_timeout = read_timeout_;
+    db_config.write_timeout = write_timeout_;
+    db_config.pool_config.initial_size = pool_initial_size_;
+    db_config.pool_config.max_size = pool_max_size_;
+    db_config.pool_config.max_idle_time = pool_max_idle_time_;
+    db_config.pool_config.wait_timeout = pool_wait_timeout_;
+    db_config.pool_config.auto_reconnect = pool_auto_reconnect_;
+
+    // 创建连接池
+    connection_pool_ = std::make_shared<DatabaseConnectionPool>(db_config, db_config.pool_config);
+
+    // 初始化连接池
+    if (!connection_pool_->initialize())
     {
-        std::cerr << "Failed to connect to database" << std::endl;
+        std::cerr << "Failed to initialize database connection pool" << std::endl;
         return false;
     }
 
@@ -48,62 +77,38 @@ bool DatabaseManager::initialize()
     return true;
 }
 
-bool DatabaseManager::connect()
-{
-    connection_ = mysql_init(nullptr);
-    if (connection_ == nullptr)
-    {
-        std::cerr << "mysql_init() failed" << std::endl;
-        return false;
-    }
-
-    if (mysql_real_connect(connection_, host_.c_str(), user_.c_str(),
-                           password_.c_str(), database_.c_str(), port_,
-                           nullptr, CLIENT_MULTI_STATEMENTS) == nullptr)
-    {
-        std::cerr << "mysql_real_connect() failed: " << mysql_error(connection_) << std::endl;
-        mysql_close(connection_);
-        connection_ = nullptr;
-        return false;
-    }
-
-    // 设置字符集
-    if (mysql_set_character_set(connection_, charset_.c_str()))
-    {
-        std::cerr << "Error setting character set: " << mysql_error(connection_) << std::endl;
-        mysql_close(connection_);
-        connection_ = nullptr;
-        return false;
-    }
-
-    // 设置超时选项
-    mysql_options(connection_, MYSQL_OPT_CONNECT_TIMEOUT, &connection_timeout_);
-    mysql_options(connection_, MYSQL_OPT_READ_TIMEOUT, &read_timeout_);
-    mysql_options(connection_, MYSQL_OPT_WRITE_TIMEOUT, &write_timeout_);
-
-    return true;
-}
+// 此方法不再需要，连接池内部管理连接
 
 void DatabaseManager::close()
 {
-    if (connection_ != nullptr)
+    if (connection_pool_)
     {
-        mysql_close(connection_);
-        connection_ = nullptr;
+        connection_pool_->shutdown();
+        connection_pool_.reset();
     }
 }
 
 bool DatabaseManager::execute_query(const std::string &query)
 {
-    if (connection_ == nullptr)
+    if (!connection_pool_ || !connection_pool_->is_valid())
     {
-        std::cerr << "Database connection is not established" << std::endl;
+        std::cerr << "Database connection pool is not initialized" << std::endl;
         return false;
     }
 
-    if (mysql_query(connection_, query.c_str()) != 0)
+    // 从连接池获取连接
+    ConnectionWrapper conn_wrapper = connection_pool_->get_connection();
+    MYSQL *connection = conn_wrapper.get();
+
+    if (connection == nullptr)
     {
-        std::cerr << "MySQL query error: " << mysql_error(connection_) << std::endl;
+        std::cerr << "Failed to get database connection from pool" << std::endl;
+        return false;
+    }
+
+    if (mysql_query(connection, query.c_str()) != 0)
+    {
+        std::cerr << "MySQL query error: " << mysql_error(connection) << std::endl;
         std::cerr << "Query: " << query << std::endl;
         return false;
     }
@@ -180,13 +185,21 @@ bool DatabaseManager::create_refresh_token_record(const std::string &token_hash,
 
 bool DatabaseManager::verify_refresh_token_record(const std::string &token_hash, std::string &out_user_id)
 {
-    if (connection_ == nullptr)
-        return false;
-    std::string q = "SELECT user_id, expires_at FROM refresh_tokens WHERE token_hash = '" + utils::replace_all(token_hash, "'", "''") + "' LIMIT 1";
-    if (!execute_query(q))
+    if (!connection_pool_ || !connection_pool_->is_valid())
         return false;
 
-    MYSQL_RES *result = mysql_store_result(connection_);
+    // 从连接池获取连接
+    ConnectionWrapper conn_wrapper = connection_pool_->get_connection();
+    MYSQL *connection = conn_wrapper.get();
+
+    if (connection == nullptr)
+        return false;
+
+    std::string q = "SELECT user_id, expires_at FROM refresh_tokens WHERE token_hash = '" + utils::replace_all(token_hash, "'", "''") + "' LIMIT 1";
+    if (mysql_query(connection, q.c_str()) != 0)
+        return false;
+
+    MYSQL_RES *result = mysql_store_result(connection);
     if (result == nullptr)
         return false;
     MYSQL_ROW row = mysql_fetch_row(result);
@@ -246,16 +259,16 @@ bool DatabaseManager::save_batch_results(const std::vector<MediaAnalysisRecord> 
     {
         try
         {
-            // 检查连接是否有效，如果无效则重新连接
-            if (connection_ == nullptr || mysql_ping(connection_) != 0)
+            // 检查连接池是否有效
+            if (!connection_pool_ || !connection_pool_->is_valid())
             {
-                std::cerr << "数据库连接无效，尝试重新连接..." << std::endl;
-                // 先关闭现有连接
+                std::cerr << "数据库连接池无效，尝试重新初始化..." << std::endl;
+                // 先关闭现有连接池
                 close();
-                // 创建新连接
-                if (!connect())
+                // 重新初始化连接池
+                if (!initialize())
                 {
-                    std::cerr << "重新连接数据库失败" << std::endl;
+                    std::cerr << "重新初始化数据库连接池失败" << std::endl;
                     retry_count++;
                     std::this_thread::sleep_for(std::chrono::seconds(1));
                     continue;
@@ -366,12 +379,30 @@ std::vector<MediaAnalysisRecord> DatabaseManager::query_results(const std::strin
     }
     query += " ORDER BY created_at DESC";
 
-    if (!execute_query(query))
+    // 从连接池获取连接
+    if (!connection_pool_ || !connection_pool_->is_valid())
     {
+        std::cerr << "Database connection pool is not initialized" << std::endl;
         return results;
     }
 
-    MYSQL_RES *result = mysql_store_result(connection_);
+    ConnectionWrapper conn_wrapper = connection_pool_->get_connection();
+    MYSQL *connection = conn_wrapper.get();
+
+    if (connection == nullptr)
+    {
+        std::cerr << "Failed to get database connection from pool" << std::endl;
+        return results;
+    }
+
+    if (mysql_query(connection, query.c_str()) != 0)
+    {
+        std::cerr << "MySQL query error: " << mysql_error(connection) << std::endl;
+        std::cerr << "Query: " << query << std::endl;
+        return results;
+    }
+
+    MYSQL_RES *result = mysql_store_result(connection);
     if (result == nullptr)
     {
         return results;
@@ -416,12 +447,30 @@ std::vector<MediaAnalysisRecord> DatabaseManager::get_recent_results(int limit)
     query << "SELECT id, file_path, file_name, file_type, analysis_result, tags, response_time, created_at, file_id FROM media_analysis";
     query << " ORDER BY created_at DESC LIMIT " << limit;
 
-    if (!execute_query(query.str()))
+    // 从连接池获取连接
+    if (!connection_pool_ || !connection_pool_->is_valid())
     {
+        std::cerr << "Database connection pool is not initialized" << std::endl;
         return results;
     }
 
-    MYSQL_RES *result = mysql_store_result(connection_);
+    ConnectionWrapper conn_wrapper = connection_pool_->get_connection();
+    MYSQL *connection = conn_wrapper.get();
+
+    if (connection == nullptr)
+    {
+        std::cerr << "Failed to get database connection from pool" << std::endl;
+        return results;
+    }
+
+    if (mysql_query(connection, query.str().c_str()) != 0)
+    {
+        std::cerr << "MySQL query error: " << mysql_error(connection) << std::endl;
+        std::cerr << "Query: " << query.str() << std::endl;
+        return results;
+    }
+
+    MYSQL_RES *result = mysql_store_result(connection);
     if (result == nullptr)
     {
         return results;
@@ -452,10 +501,26 @@ nlohmann::json DatabaseManager::get_statistics()
 {
     nlohmann::json stats;
 
-    // 总分析数量
-    if (execute_query("SELECT COUNT(*) FROM media_analysis"))
+    // 从连接池获取连接
+    if (!connection_pool_ || !connection_pool_->is_valid())
     {
-        MYSQL_RES *result = mysql_store_result(connection_);
+        std::cerr << "Database connection pool is not initialized" << std::endl;
+        return stats;
+    }
+
+    ConnectionWrapper conn_wrapper = connection_pool_->get_connection();
+    MYSQL *connection = conn_wrapper.get();
+
+    if (connection == nullptr)
+    {
+        std::cerr << "Failed to get database connection from pool" << std::endl;
+        return stats;
+    }
+
+    // 总分析数量
+    if (mysql_query(connection, "SELECT COUNT(*) FROM media_analysis") == 0)
+    {
+        MYSQL_RES *result = mysql_store_result(connection);
         if (result != nullptr)
         {
             MYSQL_ROW row = mysql_fetch_row(result);
@@ -468,9 +533,9 @@ nlohmann::json DatabaseManager::get_statistics()
     }
 
     // 图片分析数量
-    if (execute_query("SELECT COUNT(*) FROM media_analysis WHERE file_type = 'image'"))
+    if (mysql_query(connection, "SELECT COUNT(*) FROM media_analysis WHERE file_type = 'image'") == 0)
     {
-        MYSQL_RES *result = mysql_store_result(connection_);
+        MYSQL_RES *result = mysql_store_result(connection);
         if (result != nullptr)
         {
             MYSQL_ROW row = mysql_fetch_row(result);
@@ -483,9 +548,9 @@ nlohmann::json DatabaseManager::get_statistics()
     }
 
     // 视频分析数量
-    if (execute_query("SELECT COUNT(*) FROM media_analysis WHERE file_type = 'video'"))
+    if (mysql_query(connection, "SELECT COUNT(*) FROM media_analysis WHERE file_type = 'video'") == 0)
     {
-        MYSQL_RES *result = mysql_store_result(connection_);
+        MYSQL_RES *result = mysql_store_result(connection);
         if (result != nullptr)
         {
             MYSQL_ROW row = mysql_fetch_row(result);
@@ -498,9 +563,9 @@ nlohmann::json DatabaseManager::get_statistics()
     }
 
     // 平均响应时间
-    if (execute_query("SELECT AVG(response_time) FROM media_analysis"))
+    if (mysql_query(connection, "SELECT AVG(response_time) FROM media_analysis") == 0)
     {
-        MYSQL_RES *result = mysql_store_result(connection_);
+        MYSQL_RES *result = mysql_store_result(connection);
         if (result != nullptr)
         {
             MYSQL_ROW row = mysql_fetch_row(result);
@@ -513,9 +578,9 @@ nlohmann::json DatabaseManager::get_statistics()
     }
 
     // 最常用标签
-    if (execute_query("SELECT tags FROM media_analysis WHERE tags IS NOT NULL AND tags != ''"))
+    if (mysql_query(connection, "SELECT tags FROM media_analysis WHERE tags IS NOT NULL AND tags != ''") == 0)
     {
-        MYSQL_RES *result = mysql_store_result(connection_);
+        MYSQL_RES *result = mysql_store_result(connection);
         if (result != nullptr)
         {
             std::map<std::string, int> tag_counts;

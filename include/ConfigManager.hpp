@@ -3,6 +3,16 @@
 #include <string>
 #include <nlohmann/json.hpp>
 
+// 连接池配置结构
+struct PoolConfig
+{
+    size_t initial_size = 5;
+    size_t max_size = 20;
+    size_t max_idle_time = 300;
+    size_t wait_timeout = 5000;
+    bool auto_reconnect = true;
+};
+
 // 数据库配置结构
 struct DatabaseConfig
 {
@@ -15,6 +25,7 @@ struct DatabaseConfig
     int connection_timeout = 60;
     int read_timeout = 60;
     int write_timeout = 60;
+    PoolConfig pool_config;
 };
 
 // 备份配置结构

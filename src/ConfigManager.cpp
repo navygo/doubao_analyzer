@@ -56,6 +56,13 @@ bool ConfigManager::save_config()
         config["database"]["read_timeout"] = db_config_.read_timeout;
         config["database"]["write_timeout"] = db_config_.write_timeout;
 
+        // 连接池配置
+        config["database"]["pool"]["initial_size"] = db_config_.pool_config.initial_size;
+        config["database"]["pool"]["max_size"] = db_config_.pool_config.max_size;
+        config["database"]["pool"]["max_idle_time"] = db_config_.pool_config.max_idle_time;
+        config["database"]["pool"]["wait_timeout"] = db_config_.pool_config.wait_timeout;
+        config["database"]["pool"]["auto_reconnect"] = db_config_.pool_config.auto_reconnect;
+
         config["backup"]["auto_backup"] = backup_config_.auto_backup;
         config["backup"]["backup_interval_hours"] = backup_config_.backup_interval_hours;
         config["backup"]["backup_retention_days"] = backup_config_.backup_retention_days;
@@ -153,6 +160,22 @@ void ConfigManager::parse_config(const nlohmann::json &config)
             db_config_.read_timeout = db["read_timeout"];
         if (db.contains("write_timeout"))
             db_config_.write_timeout = db["write_timeout"];
+
+        // 解析连接池配置
+        if (db.contains("pool"))
+        {
+            const auto &pool = db["pool"];
+            if (pool.contains("initial_size"))
+                db_config_.pool_config.initial_size = pool["initial_size"];
+            if (pool.contains("max_size"))
+                db_config_.pool_config.max_size = pool["max_size"];
+            if (pool.contains("max_idle_time"))
+                db_config_.pool_config.max_idle_time = pool["max_idle_time"];
+            if (pool.contains("wait_timeout"))
+                db_config_.pool_config.wait_timeout = pool["wait_timeout"];
+            if (pool.contains("auto_reconnect"))
+                db_config_.pool_config.auto_reconnect = pool["auto_reconnect"];
+        }
     }
 
     // 解析备份配置
@@ -204,6 +227,13 @@ nlohmann::json ConfigManager::get_default_config()
     config["database"]["connection_timeout"] = 60;
     config["database"]["read_timeout"] = 60;
     config["database"]["write_timeout"] = 60;
+
+    // 连接池默认配置
+    config["database"]["pool"]["initial_size"] = 5;
+    config["database"]["pool"]["max_size"] = 20;
+    config["database"]["pool"]["max_idle_time"] = 300;
+    config["database"]["pool"]["wait_timeout"] = 5000;
+    config["database"]["pool"]["auto_reconnect"] = true;
 
     // 备份默认配置
     config["backup"]["auto_backup"] = true;

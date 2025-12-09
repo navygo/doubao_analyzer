@@ -330,7 +330,7 @@ std::string get_video_prompt()
 }
 
 ApiServer::ApiServer(const std::string &api_key, int port, const std::string &host)
-    : api_key_(api_key), port_(port), host_(host), server_running_(false), max_concurrent_requests_(50)
+    : api_key_(api_key), port_(port), host_(host), server_running_(false), max_concurrent_requests_(30)
 {
     // 初始化分析器
     analyzer_ = std::make_unique<DoubaoMediaAnalyzer>(api_key);
@@ -1655,7 +1655,8 @@ bool ApiServer::save_batch_to_database(const std::vector<AnalysisResult> &result
     try
     {
         // 创建异步任务来保存到数据库，避免阻塞主循环
-        std::thread db_thread([this, results]() {
+        std::thread db_thread([this, results]()
+                              {
             try {
                 bool success = analyzer_->save_batch_results_to_database(results);
                 if (!success) {
@@ -1665,8 +1666,7 @@ bool ApiServer::save_batch_to_database(const std::vector<AnalysisResult> &result
                 }
             } catch (const std::exception &e) {
                 std::cerr << "❌ 异步保存到数据库异常: " << e.what() << std::endl;
-            }
-        });
+            } });
 
         // 分离线程，使其在后台运行
         db_thread.detach();
