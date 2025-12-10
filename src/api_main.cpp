@@ -103,6 +103,14 @@ int main(int argc, char *argv[])
         {
             query_tag = argv[++i];
         }
+        else if (arg == "--port" && i + 1 < argc)
+        {
+            port = std::stoi(argv[++i]);
+        }
+        else if (arg == "--host" && i + 1 < argc)
+        {
+            host = argv[++i];
+        }
         else if (arg == "--db-stats")
         {
             show_db_stats = true;
