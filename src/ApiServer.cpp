@@ -446,9 +446,10 @@ void ApiServer::start()
     std::cout << "   - POST /api/auth : 获取JWT令牌" << std::endl;
     std::cout << "   - POST /api/auth/refresh : 刷新 access token，使用 refresh token 获取新的 access token" << std::endl;
 
-    std::cout << "   - POST /api/analyze : 分析图片或视频" << std::endl;
+    std::cout << "   - POST /api/analyze : 分析图片、视频、文本、文件或音频" << std::endl;
     std::cout << "   - POST /api/batch_analyze : 批量分析图片或视频" << std::endl;
     std::cout << "   - POST /api/excel_analyze : 分析Excel文件中的媒体URL" << std::endl;
+
     std::cout << "   - POST /api/query : 查询已分析的结果" << std::endl;
     std::cout << "   - GET /api/status : 获取服务器状态" << std::endl;
     std::cout << "🔄 服务器已启用并发处理，最大并发连接数: " << max_concurrent_requests_ << std::endl;
@@ -813,26 +814,94 @@ ApiResponse ApiServer::process_request(const std::string &request_json, const st
             nlohmann::json request_data = nlohmann::json::parse(request_json);
 
             // 检查必要字段
-            if (!request_data.contains("media_type") || !request_data.contains("media_url"))
+            if (!request_data.contains("media_type"))
             {
                 response.success = false;
-                response.message = "请求缺少必要字段: media_type 和 media_url";
+                response.message = "请求缺少必要字段: media_type";
                 response.error = "Invalid request format";
                 return response;
             }
 
+            std::string media_type = request_data["media_type"].get<std::string>();
+
             ApiRequest request;
             request.media_type = request_data["media_type"].get<std::string>();
 
-            // 处理多个URL的情况，只取第一个
-            std::string media_url = request_data["media_url"].get<std::string>();
-            size_t comma_pos = media_url.find(",");
-            if (comma_pos != std::string::npos)
+            // 根据媒体类型设置请求参数
+            if (media_type == "image" || media_type == "video")
             {
-                media_url = media_url.substr(0, comma_pos);
-                std::cout << "🔍 [信息] 检测到多个URL，只使用第一个: " << media_url << std::endl;
+                // 处理多个URL的情况，只取第一个
+                if (!request_data.contains("media_url"))
+                {
+                    response.success = false;
+                    response.message = "媒体类型为image或video时，必须提供media_url";
+                    response.error = "Invalid request format";
+                    return response;
+                }
+
+                std::string media_url = request_data["media_url"].get<std::string>();
+                size_t comma_pos = media_url.find(",");
+                if (comma_pos != std::string::npos)
+                {
+                    media_url = media_url.substr(0, comma_pos);
+                    std::cout << "🔍 [信息] 检测到多个URL，只使用第一个: " << media_url << std::endl;
+                }
+                request.media_url = media_url;
             }
-            request.media_url = media_url;
+            else if (media_type == "text")
+            {
+                // 文本类型
+                if (!request_data.contains("text"))
+                {
+                    response.success = false;
+                    response.message = "媒体类型为text时，必须提供text";
+                    response.error = "Invalid request format";
+                    return response;
+                }
+                request.text = request_data["text"].get<std::string>();
+            }
+            else if (media_type == "file")
+            {
+                // 文件类型
+                if (!request_data.contains("file_path"))
+                {
+                    response.success = false;
+                    response.message = "媒体类型为file时，必须提供file_path";
+                    response.error = "Invalid request format";
+                    return response;
+                }
+                request.file_path = request_data["file_path"].get<std::string>();
+            }
+            else if (media_type == "audio")
+            {
+                // 音频类型
+                if (!request_data.contains("media_url") && !request_data.contains("file_path"))
+                {
+                    response.success = false;
+                    response.message = "媒体类型为audio时，必须提供media_url或file_path";
+                    response.error = "Invalid request format";
+                    return response;
+                }
+
+                if (request_data.contains("media_url"))
+                {
+                    std::string media_url = request_data["media_url"].get<std::string>();
+                    request.media_url = media_url;
+                }
+
+                if (request_data.contains("file_path"))
+                {
+                    request.file_path = request_data["file_path"].get<std::string>();
+                }
+            }
+            else
+            {
+                response.success = false;
+                response.message = "不支持的媒体类型: " + media_type + " (支持的类型: image, video, text, file, audio)";
+                response.error = "Invalid media type";
+                return response;
+            }
+
             request.prompt = request_data.value("prompt", "");
             request.max_tokens = request_data.value("max_tokens", 1500);
             request.video_frames = request_data.value("video_frames", 5);
@@ -841,15 +910,6 @@ ApiResponse ApiServer::process_request(const std::string &request_json, const st
             // 添加大模型配置参数 （可选）
             request.model_name = request_data.value("model_name", "");
 
-            // 验证媒体类型
-            if (request.media_type != "image" && request.media_type != "video")
-            {
-                response.success = false;
-                response.message = "无效的媒体类型，必须是 'image' 或 'video'";
-                response.error = "Invalid media type";
-                return response;
-            }
-
             // 处理请求
             double start_time = utils::get_current_time();
 
@@ -857,9 +917,134 @@ ApiResponse ApiServer::process_request(const std::string &request_json, const st
             {
                 response = handle_image_analysis(request);
             }
-            else
+            else if (request.media_type == "video")
             {
                 response = handle_video_analysis(request);
+            }
+            else if (request.media_type == "text")
+            {
+                // 调用文本分析方法
+                try
+                {
+                    AnalysisResult result = analyzer_->analyze_text(
+                        request.text,
+                        request.prompt.empty() ? "请分析这段文本" : request.prompt,
+                        request.max_tokens,
+                        request.model_name);
+
+                    if (result.success)
+                    {
+                        response.success = true;
+                        response.message = "文本分析成功";
+                        response.data = {
+                            {"content", result.content},
+                            {"response_time", result.response_time},
+                            {"usage", result.usage}};
+                    }
+                    else
+                    {
+                        response.success = false;
+                        response.message = "文本分析失败";
+                        response.error = result.error;
+                    }
+                }
+                catch (const std::exception &e)
+                {
+                    response.success = false;
+                    response.message = "文本分析异常: " + std::string(e.what());
+                    response.error = "Text analysis error";
+                }
+            }
+            else if (request.media_type == "file")
+            {
+                // 调用文件分析方法
+                try
+                {
+                    AnalysisResult result = analyzer_->analyze_file(
+                        request.file_path,
+                        request.prompt.empty() ? "请分析这个文件" : request.prompt,
+                        request.max_tokens,
+                        request.model_name);
+
+                    if (result.success)
+                    {
+                        response.success = true;
+                        response.message = "文件分析成功";
+                        response.data = {
+                            {"content", result.content},
+                            {"response_time", result.response_time},
+                            {"usage", result.usage}};
+                    }
+                    else
+                    {
+                        response.success = false;
+                        response.message = "文件分析失败";
+                        response.error = result.error;
+                    }
+                }
+                catch (const std::exception &e)
+                {
+                    response.success = false;
+                    response.message = "文件分析异常: " + std::string(e.what());
+                    response.error = "File analysis error";
+                }
+            }
+            else if (request.media_type == "audio")
+            {
+                // 音频分析 - 可以使用文件分析方法处理音频文件
+                try
+                {
+                    std::string audio_path = request.file_path.empty() ? "" : request.file_path;
+                    std::string audio_url = request.media_url.empty() ? "" : request.media_url;
+
+                    // 如果是URL，先下载
+                    if (!audio_url.empty())
+                    {
+                        audio_path = "/tmp/api_audio_" + utils::get_current_timestamp() + ".mp3";
+                        if (!utils::download_file(audio_url, audio_path))
+                        {
+                            response.success = false;
+                            response.message = "音频下载失败: " + audio_url;
+                            response.error = "Audio download failed";
+                            return response;
+                        }
+                    }
+
+                    // 调用文件分析方法
+                    AnalysisResult result = analyzer_->analyze_file(
+                        audio_path,
+                        request.prompt.empty() ? "请分析这段音频" : request.prompt,
+                        request.max_tokens,
+                        request.model_name);
+
+                    // 如果是下载的临时文件，清理
+                    if (!audio_url.empty() && utils::file_exists(audio_path))
+                    {
+                        std::filesystem::remove(audio_path);
+                    }
+
+                    if (result.success)
+                    {
+                        response.success = true;
+                        response.message = "音频分析成功";
+                        response.data = {
+                            {"content", result.content},
+                            {"response_time", result.response_time},
+                            {"usage", result.usage}};
+                    }
+                    else
+                    {
+                        response.success = false;
+                        response.message = "音频分析失败";
+                        response.error = result.error;
+                    }
+                }
+                catch (const std::exception &e)
+                {
+                    response.success = false;
+                    response.message = "音频分析异常: " + std::string(e.what());
+                    response.error = "Audio analysis error";
+                }
             }
 
             response.response_time = utils::get_current_time() - start_time;

@@ -28,6 +28,8 @@ namespace config
     const int CONNECTION_TIMEOUT = 10;
     const int IMAGE_ANALYSIS_TIMEOUT = 60;
     const int VIDEO_ANALYSIS_TIMEOUT = 120;
+    const int TEXT_ANALYSIS_TIMEOUT = 60;
+    const int FILE_ANALYSIS_TIMEOUT = 120;
 
     // 文件扩展名
     const std::vector<std::string> IMAGE_EXTENSIONS = {

@@ -7,6 +7,8 @@
 #include <curl/easy.h>
 #include <sstream>
 #include <iostream>
+#include <algorithm>
+#include <cctype>
 
 // HTTP回调函数
 static size_t write_callback(void *contents, size_t size, size_t nmemb, std::string *response)
@@ -630,6 +632,189 @@ std::vector<AnalysisResult> DoubaoMediaAnalyzer::batch_analyze(const std::string
 std::vector<std::string> DoubaoMediaAnalyzer::extract_tags(const std::string &content)
 {
     return utils::extract_tags(content);
+}
+
+AnalysisResult DoubaoMediaAnalyzer::analyze_text(const std::string &text,
+                                                 const std::string &prompt,
+                                                 int max_tokens,
+                                                 const std::string &model_name)
+{
+    AnalysisResult result;
+
+    try
+    {
+        // 构建请求载荷
+        nlohmann::json payload = {
+            {"model", model_name.empty() ? model_name_ : model_name},
+            {"messages", {{{"role", "user"}, {"content", prompt + "\n\n文本内容:\n" + text}}}},
+            {"max_tokens", max_tokens},
+            {"temperature", config::DEFAULT_TEMPERATURE}};
+
+        // 发送请求
+        result = send_analysis_request(payload, config::TEXT_ANALYSIS_TIMEOUT);
+
+        if (result.success)
+        {
+            std::cout << "✅ 文本分析成功" << std::endl;
+            std::cout << "⏱️ 响应时间: " << result.response_time << " 秒" << std::endl;
+        }
+        else
+        {
+            std::cout << "❌ 文本分析失败: " << result.error << std::endl;
+        }
+    }
+    catch (const std::exception &e)
+    {
+        result.success = false;
+        result.error = "文本分析异常: " + std::string(e.what());
+    }
+
+    return result;
+}
+
+AnalysisResult DoubaoMediaAnalyzer::analyze_file(const std::string &file_path,
+                                                 const std::string &prompt,
+                                                 int max_tokens,
+                                                 const std::string &model_name)
+{
+    AnalysisResult result;
+
+    try
+    {
+        // 读取文件内容
+        if (!utils::file_exists(file_path))
+        {
+            result.success = false;
+            result.error = "文件不存在: " + file_path;
+            return result;
+        }
+
+        std::ifstream file(file_path, std::ios::binary);
+        if (!file.is_open())
+        {
+            result.success = false;
+            result.error = "无法打开文件: " + file_path;
+            return result;
+        }
+
+        // 检查文件扩展名，判断是否为二进制文件
+        std::string file_extension = "";
+        size_t dot_pos = file_path.find_last_of('.');
+        if (dot_pos != std::string::npos) {
+            file_extension = file_path.substr(dot_pos + 1);
+            std::transform(file_extension.begin(), file_extension.end(), file_extension.begin(), ::tolower);
+        }
+        
+        // 默认情况下，假设是二进制文件（如mp3、wav等）
+        bool is_binary_file = true;
+        // 只有明确的文本扩展名才认为是文本文件
+        if (file_extension == "txt" || file_extension == "md" || file_extension == "json" || file_extension == "csv") {
+            is_binary_file = false;
+        }
+        
+        is_binary_file = (file_extension == "mp3" || file_extension == "wav" || file_extension == "mp4" || 
+                             file_extension == "avi" || file_extension == "jpg" || file_extension == "png" || 
+                             file_extension == "gif" || file_extension == "pdf");
+        
+        std::string file_content;
+        
+        if (is_binary_file) {
+            // 对于二进制文件，直接读取为字节数据并编码
+            std::ifstream binary_file(file_path, std::ios::binary);
+            if (!binary_file.is_open()) {
+                result.success = false;
+                result.error = "无法打开二进制文件: " + file_path;
+                return result;
+            }
+            
+            // 读取整个文件
+            binary_file.seekg(0, std::ios::end);
+            size_t file_size = binary_file.tellg();
+            binary_file.seekg(0, std::ios::beg);
+            
+            std::vector<char> buffer(file_size);
+            binary_file.read(buffer.data(), file_size);
+            binary_file.close();
+            
+            // 对二进制内容进行base64编码
+            std::string encoded_content = utils::base64_encode(std::vector<unsigned char>(buffer.begin(), buffer.end()));
+            file_content = "二进制文件内容(base64):\n" + encoded_content;
+        } else {
+            // 对于文本文件，正常读取
+            std::ostringstream content;
+            content << file.rdbuf();
+            file.close();
+            file_content = content.str();
+        }
+
+        // 文件内容已经在上面根据文件类型处理完毕
+
+        // 构建请求载荷
+        nlohmann::json payload;
+        try
+        {
+            // 创建消息内容数组
+            nlohmann::json content_array = nlohmann::json::array();
+            
+            // 添加提示 text ,audio
+            content_array.push_back({
+                {"type", "text"},
+                {"text", prompt + "\n\n文件内容:\n"}
+            });
+
+            // 根据文件类型处理内容
+            // 所有文件内容都直接添加，不再检查特殊字符
+            if (false ||
+                file_content.find("\r") != std::string::npos ||
+                file_content.find("\t") != std::string::npos ||
+                file_content.find("\\"
+                                  "") != std::string::npos ||
+                file_content.find("\"") != std::string::npos)
+            // 所有文件内容都直接添加，不再检查特殊字符
+            content_array.push_back({
+                {"type", "text"},
+                {"text", file_content}
+            });
+
+            payload = {
+                {"model", model_name.empty() ? model_name_ : model_name},
+                {"messages", {{{"role", "user"}, {"content", content_array}}}},
+                {"max_tokens", max_tokens},
+                {"temperature", config::DEFAULT_TEMPERATURE}};
+        }
+        catch (const std::exception &e)
+        {
+            // 如果JSON构建失败，直接使用字符串格式
+            payload = {
+                {"model", model_name.empty() ? model_name_ : model_name},
+                {"messages", {{{"role", "user"}, {"content", prompt + "\n\n文件内容:\n" + file_content}}}},
+                {"max_tokens", max_tokens},
+                {"temperature", config::DEFAULT_TEMPERATURE}};
+        }
+
+        // 发送请求
+        result = send_analysis_request(payload, config::FILE_ANALYSIS_TIMEOUT);
+
+        // 记录文件分析请求
+        std::cout << "📝 [分析] 正在分析文件内容" << std::endl;
+
+        if (result.success)
+        {
+            std::cout << "✅ 文件分析成功: " << file_path << std::endl;
+            std::cout << "⏱️ 响应时间: " << result.response_time << " 秒" << std::endl;
+        }
+        else
+        {
+            std::cout << "❌ 文件分析失败: " << result.error << std::endl;
+        }
+    }
+    catch (const std::exception &e)
+    {
+        result.success = false;
+        result.error = "文件分析异常: " + std::string(e.what());
+    }
+
+    return result;
 }
 
 // 私有方法实现

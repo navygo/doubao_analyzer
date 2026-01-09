@@ -37,6 +37,8 @@ namespace config
     extern const int CONNECTION_TIMEOUT;
     extern const int IMAGE_ANALYSIS_TIMEOUT;
     extern const int VIDEO_ANALYSIS_TIMEOUT;
+    extern const int TEXT_ANALYSIS_TIMEOUT;
+    extern const int FILE_ANALYSIS_TIMEOUT;
 
     // 文件扩展名
     extern const std::vector<std::string> IMAGE_EXTENSIONS;

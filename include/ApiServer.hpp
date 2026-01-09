@@ -18,8 +18,10 @@
 // API请求结构
 struct ApiRequest
 {
-    std::string media_type; // "image" or "video"
+    std::string media_type; // "image", "video", "text", "file", "audio"
     std::string media_url;  // 图片或视频的URL地址
+    std::string text;       // 文本内容
+    std::string file_path;  // 文件路径
     std::string prompt;     // 可选的自定义提示词
     int max_tokens;         // 可选的最大令牌数
     int video_frames;       // 可选的视频帧数（仅视频分析）
@@ -51,6 +53,8 @@ struct ApiExcelRequest
     int max_tokens;          // 最大令牌数
     bool save_to_db;         // 是否保存到数据库
 };
+
+
 
 // API响应结构
 struct ApiResponse
@@ -106,6 +110,8 @@ private:
 
     // 处理数据库媒体分析请求
     ApiResponse handle_db_media_analysis(const std::string &prompt, int max_tokens = 1500, int video_frames = 5, bool save_to_db = true, const std::string &model_name = "", int batch_size = 10);
+
+
 
     // 将结果保存到数据库
     bool save_to_database(const AnalysisResult &result, const std::string &media_url, const std::string &media_type);

@@ -82,6 +82,18 @@ public:
     // 标签提取
     std::vector<std::string> extract_tags(const std::string &content);
 
+    // 文本分析
+    AnalysisResult analyze_text(const std::string &text,
+                                const std::string &prompt,
+                                int max_tokens = 1500,
+                                const std::string &model_name = "");
+
+    // 文件分析
+    AnalysisResult analyze_file(const std::string &file_path,
+                                const std::string &prompt,
+                                int max_tokens = 2000,
+                                const std::string &model_name = "");
+
     // 数据库操作
     bool initialize_database();
     bool save_result_to_database(const AnalysisResult &result);
